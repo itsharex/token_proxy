@@ -5,6 +5,8 @@ import {
   AlertCircle,
   CircleCheck,
   FileJson,
+  Loader2,
+  RefreshCw,
   Server,
   Settings2,
   Shuffle,
@@ -201,8 +203,10 @@ type ConfigToolbarProps = {
 };
 
 function ConfigToolbar({ section, status, canSave, isDirty, onReload, onSave }: ConfigToolbarProps) {
-  const saveLabel = status === "saving" ? "Saving…" : "Save";
-  const canReload = status !== "loading" && !isDirty;
+  const isLoading = status === "loading";
+  const isSaving = status === "saving";
+  const canReload = !isLoading && !isDirty;
+
   return (
     <header
       data-slot="config-toolbar"
@@ -213,11 +217,11 @@ function ConfigToolbar({ section, status, canSave, isDirty, onReload, onSave }: 
         <p className="truncate text-xs text-muted-foreground">{section.description}</p>
       </div>
       <div className="flex items-center gap-2">
-        <Button type="button" variant="ghost" onClick={onReload} disabled={!canReload}>
-          Reload
+        <Button type="button" variant="ghost" size="icon" onClick={onReload} disabled={!canReload}>
+          <RefreshCw className={isLoading ? "animate-spin" : undefined} aria-hidden="true" />
         </Button>
         <Button type="button" onClick={onSave} disabled={!canSave}>
-          {saveLabel}
+          {isSaving ? <Loader2 className="animate-spin" aria-hidden="true" /> : "Save"}
         </Button>
       </div>
     </header>
