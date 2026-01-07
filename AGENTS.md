@@ -224,7 +224,7 @@ src-tauri/src/
 - **异步运行时**: Tokio 1.49.0（多线程）
 - **Web 框架**: Axum 0.7.9
 - **HTTP 客户端**: Reqwest 0.12.26（JSON + 流式）
-- **序列化**: Serde + serde_json + toml
+- **序列化**: Serde + serde_json（JSONC 配置文件）
 - **桌面框架**: Tauri 2
 
 ---
