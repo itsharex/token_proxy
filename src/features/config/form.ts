@@ -97,13 +97,6 @@ export function toPayload(form: ConfigForm): ProxyConfigFile {
   };
 }
 
-export function parseError(error: unknown) {
-  if (error instanceof Error) {
-    return error.message;
-  }
-  return String(error);
-}
-
 export function validate(form: ConfigForm) {
   if (!form.host.trim()) {
     return { valid: false, message: "Host is required." };

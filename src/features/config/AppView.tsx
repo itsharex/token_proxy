@@ -214,72 +214,70 @@ export function AppView(props: AppViewProps) {
   const sectionMeta = useMemo(() => findSection(activeSection), [activeSection]);
 
   return (
-    <main className="app-shell">
-      <Tabs
-        data-slot="config-desktop-shell"
-        value={activeSection}
-        onValueChange={(value) => {
-          const nextSection = toConfigSectionId(value);
-          if (nextSection) {
-            setActiveSection(nextSection);
-          }
-        }}
-        orientation="vertical"
-        className="relative z-10 grid h-full min-h-0 grid-cols-[280px_1fr]"
+    <Tabs
+      data-slot="config-desktop-shell"
+      value={activeSection}
+      onValueChange={(value) => {
+        const nextSection = toConfigSectionId(value);
+        if (nextSection) {
+          setActiveSection(nextSection);
+        }
+      }}
+      orientation="vertical"
+      className="relative z-10 grid h-full min-h-0 grid-cols-[280px_1fr]"
+    >
+      <ConfigSidebar statusBadge={props.statusBadge} activeSection={activeSection} />
+      <section
+        data-slot="config-main"
+        className="flex min-h-0 flex-col bg-background/30 backdrop-blur-sm"
       >
-        <ConfigSidebar statusBadge={props.statusBadge} activeSection={activeSection} />
-        <section
-          data-slot="config-main"
-          className="flex min-h-0 flex-col bg-background/30 backdrop-blur-sm"
-        >
-          <ConfigToolbar
-            section={sectionMeta}
-            status={props.status}
-            canSave={props.canSave}
-            onSave={props.onSave}
-          />
-          <ScrollArea data-slot="config-main-scroll" className="min-h-0 flex-1">
-            <div className="p-6">
-              <StatusAlert statusMessage={props.statusMessage} />
-              <TabsContent value="core" className="mt-0">
-                <ProxyCoreCard
-                  form={props.form}
-                  showLocalKey={props.showLocalKey}
-                  onToggleLocalKey={props.onToggleLocalKey}
-                  onChange={props.onFormChange}
-                />
-              </TabsContent>
-              <TabsContent value="strategy" className="mt-0">
-                <StrategyCard strategy={props.form.upstreamStrategy} onChange={props.onStrategyChange} />
-              </TabsContent>
-              <TabsContent value="upstreams" className="mt-0">
-                <UpstreamsCard
-                  upstreams={props.form.upstreams}
-                  showApiKeys={props.showUpstreamKeys}
-                  providerOptions={props.providerOptions}
-                  onToggleApiKeys={props.onToggleUpstreamKeys}
-                  onAdd={props.onAddUpstream}
-                  onRemove={props.onRemoveUpstream}
-                  onChange={props.onChangeUpstream}
-                />
-              </TabsContent>
-              <TabsContent value="file" className="mt-0">
-                <ConfigFileCard
-                  configPath={props.configPath}
-                  savedAt={props.savedAt}
-                  status={props.status}
-                  isDirty={props.isDirty}
-                  onReset={props.onReset}
-                  onReload={props.onReload}
-                />
-              </TabsContent>
-              <TabsContent value="validation" className="mt-0">
-                <ValidationCard form={props.form} validation={props.validation} />
-              </TabsContent>
-            </div>
-          </ScrollArea>
-        </section>
-      </Tabs>
-    </main>
+        <ConfigToolbar
+          section={sectionMeta}
+          status={props.status}
+          canSave={props.canSave}
+          onSave={props.onSave}
+        />
+        <ScrollArea data-slot="config-main-scroll" className="min-h-0 flex-1">
+          <div className="p-6">
+            <StatusAlert statusMessage={props.statusMessage} />
+            <TabsContent value="core" className="mt-0">
+              <ProxyCoreCard
+                form={props.form}
+                showLocalKey={props.showLocalKey}
+                onToggleLocalKey={props.onToggleLocalKey}
+                onChange={props.onFormChange}
+              />
+            </TabsContent>
+            <TabsContent value="strategy" className="mt-0">
+              <StrategyCard strategy={props.form.upstreamStrategy} onChange={props.onStrategyChange} />
+            </TabsContent>
+            <TabsContent value="upstreams" className="mt-0">
+              <UpstreamsCard
+                upstreams={props.form.upstreams}
+                showApiKeys={props.showUpstreamKeys}
+                providerOptions={props.providerOptions}
+                onToggleApiKeys={props.onToggleUpstreamKeys}
+                onAdd={props.onAddUpstream}
+                onRemove={props.onRemoveUpstream}
+                onChange={props.onChangeUpstream}
+              />
+            </TabsContent>
+            <TabsContent value="file" className="mt-0">
+              <ConfigFileCard
+                configPath={props.configPath}
+                savedAt={props.savedAt}
+                status={props.status}
+                isDirty={props.isDirty}
+                onReset={props.onReset}
+                onReload={props.onReload}
+              />
+            </TabsContent>
+            <TabsContent value="validation" className="mt-0">
+              <ValidationCard form={props.form} validation={props.validation} />
+            </TabsContent>
+          </div>
+        </ScrollArea>
+      </section>
+    </Tabs>
   );
 }

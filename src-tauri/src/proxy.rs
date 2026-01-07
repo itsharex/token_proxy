@@ -1,4 +1,5 @@
 pub(crate) mod config;
+pub(crate) mod dashboard;
 mod http;
 mod log;
 mod openai_compat;
@@ -6,6 +7,7 @@ mod request_body;
 mod response;
 mod server;
 mod sse;
+mod sqlite;
 mod upstream;
 mod usage;
 

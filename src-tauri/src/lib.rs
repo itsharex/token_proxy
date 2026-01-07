@@ -13,6 +13,15 @@ async fn write_proxy_config(
     proxy::config::write_config(app, config).await
 }
 
+#[tauri::command]
+async fn read_dashboard_snapshot(
+    app: tauri::AppHandle,
+    range: proxy::dashboard::DashboardRange,
+    limit: Option<u32>,
+) -> Result<proxy::dashboard::DashboardSnapshot, String> {
+    proxy::dashboard::read_snapshot(app, range, limit).await
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -23,7 +32,8 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             read_proxy_config,
-            write_proxy_config
+            write_proxy_config,
+            read_dashboard_snapshot
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

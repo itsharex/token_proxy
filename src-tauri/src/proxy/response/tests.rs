@@ -40,7 +40,11 @@ fn parse_sse_json(bytes: &Bytes) -> Option<Value> {
 fn stream_responses_to_chat_emits_role_delta_and_done_and_logs_usage() {
     run_async(async {
         let log_path = unique_log_path("responses_to_chat");
-        let log = Arc::new(LogWriter::new(&log_path).await.expect("create log writer"));
+        let log = Arc::new(
+            LogWriter::new(&log_path, None)
+                .await
+                .expect("create log writer"),
+        );
         let context = LogContext {
             path: "/v1/responses".to_string(),
             provider: "openai-response".to_string(),
@@ -109,7 +113,11 @@ fn stream_responses_to_chat_emits_role_delta_and_done_and_logs_usage() {
 fn stream_chat_to_responses_handles_chunk_boundaries_and_emits_created_delta_done_and_logs_usage() {
     run_async(async {
         let log_path = unique_log_path("chat_to_responses");
-        let log = Arc::new(LogWriter::new(&log_path).await.expect("create log writer"));
+        let log = Arc::new(
+            LogWriter::new(&log_path, None)
+                .await
+                .expect("create log writer"),
+        );
         let context = LogContext {
             path: "/v1/chat/completions".to_string(),
             provider: "openai".to_string(),
@@ -121,8 +129,7 @@ fn stream_chat_to_responses_handles_chunk_boundaries_and_emits_created_delta_don
             start: Instant::now(),
         };
 
-        let first_event =
-            "data: {\"choices\":[{\"delta\":{\"content\":\"Hi\"}}]}\n\n";
+        let first_event = "data: {\"choices\":[{\"delta\":{\"content\":\"Hi\"}}]}\n\n";
         let (first_a, first_b) = first_event.split_at(12);
 
         let upstream = futures_util::stream::iter(vec![

@@ -26,6 +26,7 @@ use super::{
     RequestMeta,
 };
 use super::log::LogWriter;
+use super::sqlite;
 
 const PROVIDER_CLAUDE: &str = "claude";
 const CLAUDE_MESSAGES_PREFIX: &str = "/v1/messages";
@@ -162,7 +163,14 @@ async fn run_proxy(app: tauri::AppHandle) -> Result<(), Box<dyn std::error::Erro
         .await
         .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err))?;
     let addr = config.addr();
-    let log = Arc::new(LogWriter::new(&config.log_path).await?);
+    let sqlite_pool = match sqlite::open_pool(&app).await {
+        Ok(pool) => Some(pool),
+        Err(err) => {
+            eprintln!("sqlite init failed: {err}");
+            None
+        }
+    };
+    let log = Arc::new(LogWriter::new(&config.log_path, sqlite_pool).await?);
     let client = reqwest::Client::new();
     let cursors = build_upstream_cursors(&config);
     let state = Arc::new(ProxyState {

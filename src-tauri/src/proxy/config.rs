@@ -583,7 +583,7 @@ async fn ensure_parent_dir(path: &Path) -> Result<(), String> {
 }
 
 /// Config directory: BaseDirectory::AppConfig/token_proxy
-fn config_dir_path(app: &AppHandle) -> Result<PathBuf, String> {
+pub(crate) fn config_dir_path(app: &AppHandle) -> Result<PathBuf, String> {
     app.path()
         .resolve(CONFIG_DIR, BaseDirectory::AppConfig)
         .map_err(|err| format!("Failed to resolve config dir: {err}"))
