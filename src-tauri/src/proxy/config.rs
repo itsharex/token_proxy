@@ -3,7 +3,7 @@ use std::{
     collections::{HashMap, HashSet},
     path::{Path, PathBuf},
 };
-use tauri::{path::BaseDirectory, AppHandle, Manager};
+use tauri::{AppHandle, Manager};
 
 const CONFIG_FILE_NAME: &str = "config.jsonc";
 const DEFAULT_CONFIG_HEADER: &str =
@@ -203,10 +203,42 @@ struct NormalizedUpstream {
 }
 
 impl UpstreamRuntime {
+    /// 构建上游请求 URL，智能处理 base_url 与 path 的路径重叠
+    /// 例如：base_url = "https://example.com/openai/v1", path = "/v1/chat/completions"
+    /// 结果：https://example.com/openai/v1/chat/completions（去掉重复的 /v1）
     pub(crate) fn upstream_url(&self, path: &str) -> String {
         let base = self.base_url.trim_end_matches('/');
-        format!("{base}{path}")
+        let effective_path = strip_overlapping_prefix(base, path);
+        format!("{base}{effective_path}")
     }
+}
+
+/// 去掉 path 开头与 base_url 路径部分重叠的前缀
+/// base_url: "https://example.com/openai/v1" -> base_path: "/openai/v1"
+/// 如果 path 以 base_path 的某个后缀开头（如 "/v1"），则去掉该重叠部分
+fn strip_overlapping_prefix<'a>(base_url: &str, path: &'a str) -> &'a str {
+    let Some(base_path) = url::Url::parse(base_url)
+        .ok()
+        .map(|url| url.path().to_string())
+    else {
+        return path;
+    };
+    // 检查 base_path 的每个后缀是否与 path 的前缀重叠
+    // 例如 base_path = "/openai/v1"，依次检查 "/openai/v1", "/v1"
+    let base_path = base_path.trim_end_matches('/');
+    for (idx, ch) in base_path.char_indices() {
+        if ch == '/' {
+            let suffix = &base_path[idx..];
+            if path.starts_with(suffix) {
+                return &path[suffix.len()..];
+            }
+        }
+    }
+    // 完整匹配检查（base_path 本身）
+    if path.starts_with(base_path) {
+        return &path[base_path.len()..];
+    }
+    path
 }
 
 fn normalize_upstreams(upstreams: &[UpstreamConfig]) -> Result<Vec<NormalizedUpstream>, String> {
@@ -600,4 +632,125 @@ fn resolve_log_path(app: &AppHandle, log_path: &str) -> Result<PathBuf, String> 
         return Ok(path);
     }
     Ok(config_dir_path(app)?.join(log_path))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_strip_overlapping_prefix() {
+        // 标准 OpenAI 兼容格式：base_url 包含 /v1
+        assert_eq!(
+            strip_overlapping_prefix("https://api.example.com/openai/v1", "/v1/chat/completions"),
+            "/chat/completions"
+        );
+        assert_eq!(
+            strip_overlapping_prefix("https://api.example.com/v1", "/v1/chat/completions"),
+            "/chat/completions"
+        );
+
+        // 无重叠情况：base_url 不包含路径
+        assert_eq!(
+            strip_overlapping_prefix("https://api.openai.com", "/v1/chat/completions"),
+            "/v1/chat/completions"
+        );
+
+        // 无重叠情况：base_url 路径与请求路径无公共后缀
+        assert_eq!(
+            strip_overlapping_prefix("https://api.example.com/openai/", "/v1/chat/completions"),
+            "/v1/chat/completions"
+        );
+        assert_eq!(
+            strip_overlapping_prefix("https://api.example.com/openai", "/v1/chat/completions"),
+            "/v1/chat/completions"
+        );
+
+        // 多层路径重叠
+        assert_eq!(
+            strip_overlapping_prefix("https://example.com/api/openai/v1", "/v1/models"),
+            "/models"
+        );
+
+        // 完整路径重叠
+        assert_eq!(
+            strip_overlapping_prefix("https://example.com/openai/v1", "/openai/v1/completions"),
+            "/completions"
+        );
+
+        // 带尾斜杠的 base_url
+        assert_eq!(
+            strip_overlapping_prefix("https://example.com/v1/", "/v1/chat/completions"),
+            "/chat/completions"
+        );
+
+        // 无效 URL 回退
+        assert_eq!(
+            strip_overlapping_prefix("not-a-valid-url", "/v1/chat/completions"),
+            "/v1/chat/completions"
+        );
+    }
+
+    #[test]
+    fn test_upstream_url() {
+        // openai provider: /v1/chat/completions
+        let upstream = UpstreamRuntime {
+            id: "test".to_string(),
+            base_url: "https://api.example.com/openai/v1".to_string(),
+            api_key: None,
+            priority: 0,
+            index: 0,
+            order: 0,
+        };
+        assert_eq!(
+            upstream.upstream_url("/v1/chat/completions"),
+            "https://api.example.com/openai/v1/chat/completions"
+        );
+
+        // openai-response provider: /v1/responses
+        let upstream_responses = UpstreamRuntime {
+            id: "test".to_string(),
+            base_url: "https://api.example.com/openai/v1".to_string(),
+            api_key: None,
+            priority: 0,
+            index: 0,
+            order: 0,
+        };
+        assert_eq!(
+            upstream_responses.upstream_url("/v1/responses"),
+            "https://api.example.com/openai/v1/responses"
+        );
+
+        // 无路径前缀的 base_url
+        let upstream_no_path = UpstreamRuntime {
+            id: "test".to_string(),
+            base_url: "https://api.openai.com".to_string(),
+            api_key: None,
+            priority: 0,
+            index: 0,
+            order: 0,
+        };
+        assert_eq!(
+            upstream_no_path.upstream_url("/v1/chat/completions"),
+            "https://api.openai.com/v1/chat/completions"
+        );
+        assert_eq!(
+            upstream_no_path.upstream_url("/v1/responses"),
+            "https://api.openai.com/v1/responses"
+        );
+
+        // 带尾斜杠的 base_url
+        let upstream_trailing_slash = UpstreamRuntime {
+            id: "test".to_string(),
+            base_url: "https://api.example.com/openai/v1/".to_string(),
+            api_key: None,
+            priority: 0,
+            index: 0,
+            order: 0,
+        };
+        assert_eq!(
+            upstream_trailing_slash.upstream_url("/v1/chat/completions"),
+            "https://api.example.com/openai/v1/chat/completions"
+        );
+    }
 }
