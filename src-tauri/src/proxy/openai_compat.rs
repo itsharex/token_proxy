@@ -1,6 +1,11 @@
 use axum::body::Bytes;
 use serde_json::{json, Map, Value};
 
+mod extract;
+mod input;
+mod tools;
+mod usage;
+
 pub(crate) const CHAT_PATH: &str = "/v1/chat/completions";
 pub(crate) const RESPONSES_PATH: &str = "/v1/responses";
 
@@ -67,8 +72,6 @@ fn chat_request_to_responses(body: &Bytes) -> Result<Bytes, String> {
     copy_key(object, &mut output, "temperature");
     copy_key(object, &mut output, "top_p");
     copy_key(object, &mut output, "stop");
-    copy_key(object, &mut output, "tools");
-    copy_key(object, &mut output, "tool_choice");
     copy_key(object, &mut output, "metadata");
     copy_key(object, &mut output, "user");
     copy_key(object, &mut output, "seed");
@@ -79,6 +82,16 @@ fn chat_request_to_responses(body: &Bytes) -> Result<Bytes, String> {
         .and_then(Value::as_i64)
     {
         output.insert("max_output_tokens".to_string(), Value::Number(max_output_tokens.into()));
+    }
+
+    if let Some(tools) = object.get("tools") {
+        output.insert("tools".to_string(), tools::map_chat_tools_to_responses(tools));
+    }
+    if let Some(tool_choice) = object.get("tool_choice") {
+        output.insert(
+            "tool_choice".to_string(),
+            tools::map_chat_tool_choice_to_responses(tool_choice),
+        );
     }
 
     serde_json::to_vec(&Value::Object(output))
@@ -95,7 +108,7 @@ fn responses_request_to_chat(body: &Bytes) -> Result<Bytes, String> {
 
     let mut messages = match object.get("input") {
         Some(Value::String(text)) => vec![json!({ "role": "user", "content": text })],
-        Some(Value::Array(items)) => items.clone(),
+        Some(Value::Array(items)) => input::responses_input_to_chat_messages(items)?,
         _ => return Err("Responses request must include input.".to_string()),
     };
 
@@ -113,17 +126,26 @@ fn responses_request_to_chat(body: &Bytes) -> Result<Bytes, String> {
     copy_key(object, &mut output, "temperature");
     copy_key(object, &mut output, "top_p");
     copy_key(object, &mut output, "stop");
-    copy_key(object, &mut output, "tools");
-    copy_key(object, &mut output, "tool_choice");
     copy_key(object, &mut output, "metadata");
     copy_key(object, &mut output, "user");
     copy_key(object, &mut output, "seed");
+    copy_key(object, &mut output, "parallel_tool_calls");
 
     if let Some(max_output_tokens) = object.get("max_output_tokens").and_then(Value::as_i64) {
         // Prefer the modern chat parameter.
         output.insert(
             "max_completion_tokens".to_string(),
             Value::Number(max_output_tokens.into()),
+        );
+    }
+
+    if let Some(tools) = object.get("tools") {
+        output.insert("tools".to_string(), tools::map_responses_tools_to_chat(tools));
+    }
+    if let Some(tool_choice) = object.get("tool_choice") {
+        output.insert(
+            "tool_choice".to_string(),
+            tools::map_responses_tool_choice_to_chat(tool_choice),
         );
     }
 
@@ -139,7 +161,7 @@ fn responses_response_to_chat(bytes: &Bytes, model_hint: Option<&str>) -> Result
         return Err("Upstream response must be a JSON object.".to_string());
     };
 
-    let content = extract_responses_output_text(&value).unwrap_or_default();
+    let content = extract::extract_responses_output_text(&value).unwrap_or_default();
     let id = object
         .get("id")
         .and_then(Value::as_str)
@@ -153,7 +175,7 @@ fn responses_response_to_chat(bytes: &Bytes, model_hint: Option<&str>) -> Result
 
     let usage = object
         .get("usage")
-        .and_then(|usage| map_usage_responses_to_chat(usage));
+        .and_then(|usage| usage::map_usage_responses_to_chat(usage));
 
     let output = json!({
         "id": id,
@@ -182,14 +204,39 @@ fn chat_response_to_responses(bytes: &Bytes) -> Result<Bytes, String> {
         return Err("Upstream response must be a JSON object.".to_string());
     };
 
-    let content = extract_chat_choice_text(&value).unwrap_or_default();
+    let content = extract::extract_chat_choice_text(&value).unwrap_or_default();
+    let tool_calls = extract::extract_chat_tool_calls(&value);
+    let parallel_tool_calls = tool_calls.len() > 1;
     let id = object.get("id").and_then(Value::as_str).unwrap_or("resp-proxy");
     let created = object.get("created").and_then(Value::as_i64).unwrap_or(0);
     let model = object.get("model").and_then(Value::as_str).unwrap_or("unknown");
 
     let usage = object
         .get("usage")
-        .and_then(|usage| map_usage_chat_to_responses(usage));
+        .and_then(|usage| usage::map_usage_chat_to_responses(usage));
+
+    let mut output = Vec::new();
+    if !content.trim().is_empty() || tool_calls.is_empty() {
+        output.push(json!({
+            "type": "message",
+            "id": "msg_proxy",
+            "status": "completed",
+            "role": "assistant",
+            "content": [
+                { "type": "output_text", "text": content, "annotations": [] }
+            ]
+        }));
+    }
+    for call in tool_calls {
+        output.push(json!({
+            "id": call.item_id,
+            "type": "function_call",
+            "status": "completed",
+            "arguments": call.arguments,
+            "call_id": call.call_id,
+            "name": call.name
+        }));
+    }
 
     let output = json!({
         "id": id,
@@ -198,17 +245,8 @@ fn chat_response_to_responses(bytes: &Bytes) -> Result<Bytes, String> {
         "status": "completed",
         "error": null,
         "model": model,
-        "output": [
-            {
-                "type": "message",
-                "id": "msg_proxy",
-                "status": "completed",
-                "role": "assistant",
-                "content": [
-                    { "type": "output_text", "text": content, "annotations": [] }
-                ]
-            }
-        ],
+        "parallel_tool_calls": parallel_tool_calls,
+        "output": output,
         "usage": usage
     });
 
@@ -221,89 +259,6 @@ fn copy_key(source: &serde_json::Map<String, Value>, target: &mut Map<String, Va
     if let Some(value) = source.get(key) {
         target.insert(key.to_string(), value.clone());
     }
-}
-
-fn extract_chat_choice_text(value: &Value) -> Option<String> {
-    let choices = value.get("choices")?.as_array()?;
-    let first = choices.first()?.as_object()?;
-    let message = first.get("message")?.as_object()?;
-    message.get("content")?.as_str().map(|text| text.to_string())
-}
-
-fn extract_responses_output_text(value: &Value) -> Option<String> {
-    let output = value.get("output")?.as_array()?;
-    let mut combined = String::new();
-    for item in output {
-        let Some(item) = item.as_object() else {
-            continue;
-        };
-        if item.get("type").and_then(Value::as_str) != Some("message") {
-            continue;
-        }
-        if item.get("role").and_then(Value::as_str) != Some("assistant") {
-            continue;
-        }
-        let Some(content) = item.get("content").and_then(Value::as_array) else {
-            continue;
-        };
-        for part in content {
-            let Some(part) = part.as_object() else {
-                continue;
-            };
-            if part.get("type").and_then(Value::as_str) != Some("output_text") {
-                continue;
-            }
-            if let Some(text) = part.get("text").and_then(Value::as_str) {
-                combined.push_str(text);
-            }
-        }
-    }
-    if combined.is_empty() {
-        None
-    } else {
-        Some(combined)
-    }
-}
-
-fn map_usage_responses_to_chat(usage: &Value) -> Option<Value> {
-    let usage = usage.as_object()?;
-    let input = usage.get("input_tokens").and_then(Value::as_u64);
-    let output = usage.get("output_tokens").and_then(Value::as_u64);
-    let total = usage
-        .get("total_tokens")
-        .and_then(Value::as_u64)
-        .or_else(|| match (input, output) {
-            (Some(input), Some(output)) => input.checked_add(output),
-            _ => None,
-        });
-    if input.is_none() && output.is_none() && total.is_none() {
-        return None;
-    }
-    Some(json!({
-        "prompt_tokens": input,
-        "completion_tokens": output,
-        "total_tokens": total
-    }))
-}
-
-fn map_usage_chat_to_responses(usage: &Value) -> Option<Value> {
-    let usage = usage.as_object()?;
-    let prompt = usage.get("prompt_tokens").and_then(Value::as_u64);
-    let completion = usage.get("completion_tokens").and_then(Value::as_u64);
-    let total = usage.get("total_tokens").and_then(Value::as_u64).or_else(|| {
-        match (prompt, completion) {
-            (Some(prompt), Some(completion)) => prompt.checked_add(completion),
-            _ => None,
-        }
-    });
-    if prompt.is_none() && completion.is_none() && total.is_none() {
-        return None;
-    }
-    Some(json!({
-        "input_tokens": prompt,
-        "output_tokens": completion,
-        "total_tokens": total
-    }))
 }
 
 #[cfg(test)]

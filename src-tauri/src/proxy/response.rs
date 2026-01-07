@@ -184,8 +184,7 @@ fn stream_chat_to_responses(
     context: LogContext,
     log: Arc<LogWriter>,
 ) -> impl futures_util::stream::Stream<Item = Result<Bytes, std::io::Error>> + Send {
-    let state = ChatToResponsesState::new(upstream, context, log);
-    try_unfold(state, |state| async move { state.step().await })
+    chat_to_responses::stream_chat_to_responses(upstream, context, log)
 }
 
 struct ResponsesToChatState<S> {
@@ -338,145 +337,6 @@ where
     }
 }
 
-struct ChatToResponsesState<S> {
-    upstream: S,
-    parser: SseEventParser,
-    collector: SseUsageCollector,
-    log: Arc<LogWriter>,
-    context: LogContext,
-    out: VecDeque<Bytes>,
-    response_id: String,
-    sequence: u64,
-    sent_created: bool,
-    sent_done: bool,
-    logged: bool,
-    upstream_ended: bool,
-}
-
-impl<S> ChatToResponsesState<S>
-where
-    S: futures_util::stream::Stream<Item = Result<Bytes, reqwest::Error>> + Unpin + Send + 'static,
-{
-    fn new(upstream: S, context: LogContext, log: Arc<LogWriter>) -> Self {
-        let now_ms = now_ms();
-        Self {
-            upstream,
-            parser: SseEventParser::new(),
-            collector: SseUsageCollector::new(),
-            log,
-            context,
-            out: VecDeque::new(),
-            response_id: format!("resp_proxy_{now_ms}"),
-            sequence: 0,
-            sent_created: false,
-            sent_done: false,
-            logged: false,
-            upstream_ended: false,
-        }
-    }
-
-    async fn step(mut self) -> Result<Option<(Bytes, Self)>, std::io::Error> {
-        loop {
-            if let Some(next) = self.out.pop_front() {
-                return Ok(Some((next, self)));
-            }
-
-            if self.upstream_ended {
-                return Ok(None);
-            }
-
-            match self.upstream.next().await {
-                Some(Ok(chunk)) => {
-                    self.collector.push_chunk(&chunk);
-                    let mut events = Vec::new();
-                    self.parser.push_chunk(&chunk, |data| events.push(data));
-                    for data in events {
-                        self.handle_event(&data);
-                    }
-                }
-                Some(Err(err)) => {
-                    self.log_usage_once().await;
-                    return Err(std::io::Error::new(std::io::ErrorKind::Other, err));
-                }
-                None => {
-                    self.upstream_ended = true;
-                    let mut events = Vec::new();
-                    self.parser.finish(|data| events.push(data));
-                    for data in events {
-                        self.handle_event(&data);
-                    }
-                    if !self.sent_done {
-                        self.push_done();
-                    }
-                    self.log_usage_once().await;
-                    if self.out.is_empty() {
-                        return Ok(None);
-                    }
-                }
-            }
-        }
-    }
-
-    fn handle_event(&mut self, data: &str) {
-        if self.sent_done {
-            return;
-        }
-        if data == "[DONE]" {
-            self.push_done();
-            return;
-        }
-        let Ok(value) = serde_json::from_str::<Value>(data) else {
-            return;
-        };
-        let Some(delta) = value
-            .get("choices")
-            .and_then(Value::as_array)
-            .and_then(|choices| choices.first())
-            .and_then(|choice| choice.get("delta"))
-            .and_then(|delta| delta.get("content"))
-            .and_then(Value::as_str)
-        else {
-            return;
-        };
-
-        if !self.sent_created {
-            self.sent_created = true;
-            self.out.push_back(responses_event_sse(json!({
-                "type": "response.created",
-                "response_id": self.response_id.as_str()
-            })));
-        }
-        self.sequence += 1;
-        self.out.push_back(responses_event_sse(json!({
-            "type": "response.output_text.delta",
-            "delta": delta,
-            "sequence_number": self.sequence
-        })));
-    }
-
-    fn push_done(&mut self) {
-        if self.sent_done {
-            return;
-        }
-        self.sent_done = true;
-        self.out.push_back(responses_event_sse(json!({
-            "type": "response.completed",
-            "response_id": self.response_id.as_str(),
-            "status": "success"
-        })));
-        self.out.push_back(Bytes::from("data: [DONE]\n\n"));
-    }
-
-    async fn log_usage_once(&mut self) {
-        if self.logged {
-            return;
-        }
-        self.logged = true;
-        let entry = build_log_entry(&self.context, self.collector.finish());
-        self.log.write(&entry).await;
-    }
-}
-
 fn chat_chunk_sse(
     id: &str,
     created: i64,
@@ -542,6 +402,8 @@ fn stream_with_logging(
         },
     )
 }
+
+mod chat_to_responses;
 
 #[cfg(test)]
 mod tests;

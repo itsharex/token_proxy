@@ -40,6 +40,74 @@ fn chat_request_to_responses_maps_common_fields() {
 }
 
 #[test]
+fn responses_request_to_chat_maps_tools_and_tool_choice() {
+    let parameters = json!({
+        "type": "object",
+        "properties": { "q": { "type": "string" } },
+        "required": ["q"]
+    });
+    let input = bytes_from_json(json!({
+        "model": "gpt-4.1",
+        "input": "hello",
+        "tools": [
+            {
+                "type": "function",
+                "name": "search",
+                "description": "Search something",
+                "parameters": parameters
+            }
+        ],
+        "tool_choice": { "type": "function", "name": "search" },
+        "stream": false
+    }));
+
+    let output = transform_request_body(FormatTransform::ResponsesToChat, &input).expect("transform");
+    let value = json_from_bytes(output);
+
+    assert_eq!(value["tools"][0]["type"], json!("function"));
+    assert_eq!(value["tools"][0]["function"]["name"], json!("search"));
+    assert_eq!(value["tools"][0]["function"]["description"], json!("Search something"));
+    assert_eq!(value["tools"][0]["function"]["parameters"], parameters);
+    assert_eq!(value["tool_choice"]["type"], json!("function"));
+    assert_eq!(value["tool_choice"]["function"]["name"], json!("search"));
+}
+
+#[test]
+fn chat_request_to_responses_maps_tools_and_tool_choice() {
+    let parameters = json!({
+        "type": "object",
+        "properties": { "q": { "type": "string" } },
+        "required": ["q"]
+    });
+    let input = bytes_from_json(json!({
+        "model": "gpt-4.1",
+        "messages": [{ "role": "user", "content": "hi" }],
+        "tools": [
+            {
+                "type": "function",
+                "function": {
+                    "name": "search",
+                    "description": "Search something",
+                    "parameters": parameters
+                }
+            }
+        ],
+        "tool_choice": { "type": "function", "function": { "name": "search" } },
+        "stream": false
+    }));
+
+    let output = transform_request_body(FormatTransform::ChatToResponses, &input).expect("transform");
+    let value = json_from_bytes(output);
+
+    assert_eq!(value["tools"][0]["type"], json!("function"));
+    assert_eq!(value["tools"][0]["name"], json!("search"));
+    assert_eq!(value["tools"][0]["description"], json!("Search something"));
+    assert_eq!(value["tools"][0]["parameters"], parameters);
+    assert_eq!(value["tool_choice"]["type"], json!("function"));
+    assert_eq!(value["tool_choice"]["name"], json!("search"));
+}
+
+#[test]
 fn responses_request_to_chat_instructions_becomes_system_message() {
     let input = bytes_from_json(json!({
         "model": "gpt-4.1",
@@ -78,6 +146,30 @@ fn responses_request_to_chat_accepts_message_array_input() {
     assert_eq!(value["model"], json!("gpt-4.1"));
     assert_eq!(value["stream"], json!(true));
     assert_eq!(value["messages"], input_messages);
+}
+
+#[test]
+fn responses_request_to_chat_converts_input_text_content_parts_to_string() {
+    let input_messages = json!([{
+        "role": "user",
+        "content": [
+            { "type": "input_text", "text": "分析项目的逻辑缺陷和性能缺陷" }
+        ]
+    }]);
+    let input = bytes_from_json(json!({
+        "model": "gpt-4.1",
+        "input": input_messages,
+        "stream": false
+    }));
+
+    let output = transform_request_body(FormatTransform::ResponsesToChat, &input).expect("transform");
+    let value = json_from_bytes(output);
+
+    assert_eq!(value["messages"][0]["role"], json!("user"));
+    assert_eq!(
+        value["messages"][0]["content"],
+        json!("分析项目的逻辑缺陷和性能缺陷")
+    );
 }
 
 #[test]
@@ -142,6 +234,70 @@ fn chat_response_to_responses_extracts_choice_text_and_maps_usage() {
 }
 
 #[test]
+fn responses_request_to_chat_converts_function_call_output_to_tool_message() {
+    let input = bytes_from_json(json!({
+        "model": "gpt-4.1",
+        "input": [
+            { "type": "function_call_output", "call_id": "call_123", "output": "ok" }
+        ],
+        "stream": false
+    }));
+
+    let output = transform_request_body(FormatTransform::ResponsesToChat, &input).expect("transform");
+    let value = json_from_bytes(output);
+    let messages = value["messages"].as_array().expect("messages array");
+
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0]["role"], json!("tool"));
+    assert_eq!(messages[0]["tool_call_id"], json!("call_123"));
+    assert_eq!(messages[0]["content"], json!("ok"));
+}
+
+#[test]
+fn chat_response_to_responses_maps_tool_calls_into_output() {
+    let input = bytes_from_json(json!({
+        "id": "chatcmpl_123",
+        "created": 1700000000,
+        "model": "gpt-4.1",
+        "choices": [
+            {
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": "call_foo",
+                            "type": "function",
+                            "function": {
+                                "name": "getRandomNumber",
+                                "arguments": "{\"a\":\"0\"}"
+                            }
+                        }
+                    ]
+                }
+            }
+        ],
+        "usage": { "prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3 }
+    }));
+
+    let output = transform_response_body(FormatTransform::ChatToResponses, &input, None).expect("transform");
+    let value = json_from_bytes(output);
+
+    assert_eq!(value["id"], json!("chatcmpl_123"));
+    assert_eq!(value["object"], json!("response"));
+    assert_eq!(value["created_at"], json!(1700000000));
+    assert_eq!(value["model"], json!("gpt-4.1"));
+    assert_eq!(value["output"][0]["type"], json!("function_call"));
+    assert_eq!(value["output"][0]["call_id"], json!("call_foo"));
+    assert_eq!(value["output"][0]["name"], json!("getRandomNumber"));
+    assert_eq!(value["output"][0]["arguments"], json!("{\"a\":\"0\"}"));
+    assert_eq!(value["usage"]["input_tokens"], json!(1));
+    assert_eq!(value["usage"]["output_tokens"], json!(2));
+    assert_eq!(value["usage"]["total_tokens"], json!(3));
+}
+
+#[test]
 fn chat_request_to_responses_rejects_missing_messages() {
     let input = bytes_from_json(json!({ "model": "gpt-4.1" }));
     let err = transform_request_body(FormatTransform::ChatToResponses, &input).expect_err("should fail");
@@ -154,4 +310,3 @@ fn transform_request_body_rejects_non_json() {
     let err = transform_request_body(FormatTransform::ChatToResponses, &input).expect_err("should fail");
     assert!(err.contains("JSON"));
 }
-
