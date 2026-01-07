@@ -2,6 +2,7 @@ pub(crate) mod config;
 mod http;
 mod log;
 mod openai_compat;
+mod request_body;
 mod response;
 mod server;
 mod sse;
@@ -26,4 +27,3 @@ struct RequestMeta {
     stream: bool,
     model: Option<String>,
 }
-

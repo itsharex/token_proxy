@@ -1,6 +1,5 @@
 use axum::{
-    body::Bytes,
-    http::{header::HeaderValue, HeaderMap, StatusCode},
+    http::{header::HeaderValue, HeaderMap, Method, StatusCode},
     response::Response,
 };
 use std::{
@@ -11,27 +10,34 @@ use std::{
     time::Instant,
 };
 
+const ANTHROPIC_VERSION_HEADER: &str = "anthropic-version";
+const DEFAULT_ANTHROPIC_VERSION: &str = "2023-06-01";
+
 use super::{
     config::{UpstreamRuntime, UpstreamStrategy},
     http,
+    http::RequestAuth,
     openai_compat::FormatTransform,
-    response::build_proxy_response,
+    request_body::ReplayableBody,
+    response::{build_proxy_response, build_proxy_response_buffered},
     ProxyState,
     RequestMeta,
 };
 
 pub(super) async fn forward_upstream_request(
     state: Arc<ProxyState>,
+    method: Method,
     provider: &str,
     inbound_path: &str,
     upstream_path_with_query: &str,
     headers: HeaderMap,
-    body: Bytes,
+    body: ReplayableBody,
     meta: RequestMeta,
-    request_auth: Option<HeaderValue>,
+    request_auth: RequestAuth,
     response_transform: FormatTransform,
 ) -> Response {
     let mut last_retry_error: Option<String> = None;
+    let mut last_retry_response: Option<Response> = None;
     let mut attempted = 0;
     let mut missing_auth = false;
 
@@ -47,6 +53,7 @@ pub(super) async fn forward_upstream_request(
         }
         let result = try_group_upstreams(
             &state,
+            method.clone(),
             provider,
             group_index,
             &group.items,
@@ -55,7 +62,7 @@ pub(super) async fn forward_upstream_request(
             &headers,
             &body,
             &meta,
-            request_auth.as_ref(),
+            &request_auth,
             response_transform,
         )
         .await;
@@ -64,6 +71,9 @@ pub(super) async fn forward_upstream_request(
         if let Some(response) = result.response {
             return response;
         }
+        if let Some(response) = result.last_retry_response {
+            last_retry_response = Some(response);
+        }
         if result.last_retry_error.is_some() {
             last_retry_error = result.last_retry_error;
         }
@@ -71,6 +81,9 @@ pub(super) async fn forward_upstream_request(
 
     if attempted == 0 && missing_auth {
         return http::error_response(StatusCode::UNAUTHORIZED, "Missing upstream API key.");
+    }
+    if let Some(response) = last_retry_response {
+        return response;
     }
     if let Some(err) = last_retry_error {
         return http::error_response(StatusCode::BAD_GATEWAY, format!("Upstream request failed: {err}"));
@@ -83,29 +96,35 @@ struct GroupAttemptResult {
     attempted: usize,
     missing_auth: bool,
     last_retry_error: Option<String>,
+    last_retry_response: Option<Response>,
 }
 
 enum AttemptOutcome {
     Success(Response),
-    Retryable(String),
+    Retryable {
+        message: String,
+        response: Option<Response>,
+    },
     Fatal(Response),
     SkippedAuth,
 }
 
 async fn try_group_upstreams(
     state: &ProxyState,
+    method: Method,
     provider: &str,
     group_index: usize,
     items: &[UpstreamRuntime],
     inbound_path: &str,
     upstream_path_with_query: &str,
     headers: &HeaderMap,
-    body: &Bytes,
+    body: &ReplayableBody,
     meta: &RequestMeta,
-    request_auth: Option<&HeaderValue>,
+    request_auth: &RequestAuth,
     response_transform: FormatTransform,
 ) -> GroupAttemptResult {
     let mut last_retry_error = None;
+    let mut last_retry_response = None;
     let mut attempted = 0;
     let mut missing_auth = false;
     let start = resolve_group_start(state, provider, group_index, items.len());
@@ -113,6 +132,7 @@ async fn try_group_upstreams(
         let upstream = &items[item_index];
         let outcome = attempt_upstream(
             state,
+            method.clone(),
             provider,
             upstream,
             inbound_path,
@@ -134,10 +154,14 @@ async fn try_group_upstreams(
                     attempted,
                     missing_auth,
                     last_retry_error,
+                    last_retry_response,
                 };
             }
-            AttemptOutcome::Retryable(message) => {
+            AttemptOutcome::Retryable { message, response } => {
                 last_retry_error = Some(message);
+                if response.is_some() {
+                    last_retry_response = response;
+                }
             }
             AttemptOutcome::SkippedAuth => {
                 missing_auth = true;
@@ -149,37 +173,74 @@ async fn try_group_upstreams(
         attempted,
         missing_auth,
         last_retry_error,
+        last_retry_response,
     }
 }
 
 async fn attempt_upstream(
     state: &ProxyState,
+    method: Method,
     provider: &str,
     upstream: &UpstreamRuntime,
     inbound_path: &str,
     upstream_path_with_query: &str,
     headers: &HeaderMap,
-    body: &Bytes,
+    body: &ReplayableBody,
     meta: &RequestMeta,
-    request_auth: Option<&HeaderValue>,
+    request_auth: &RequestAuth,
     response_transform: FormatTransform,
 ) -> AttemptOutcome {
-    let auth = match http::resolve_upstream_auth(upstream, request_auth) {
+    let auth = match http::resolve_upstream_auth(provider, upstream, request_auth) {
         Ok(Some(auth)) => auth,
         Ok(None) => return AttemptOutcome::SkippedAuth,
         Err(response) => return AttemptOutcome::Fatal(response),
     };
     let upstream_url = upstream.upstream_url(upstream_path_with_query);
-    let request_headers = http::build_upstream_headers(headers, auth);
+    let mut request_headers = http::build_upstream_headers(headers, auth);
+    if provider == "claude" && !request_headers.contains_key(ANTHROPIC_VERSION_HEADER) {
+        // Anthropic 官方 API 需要 `anthropic-version`；缺省时补一个稳定默认值，允许客户端覆盖。
+        request_headers.insert(
+            ANTHROPIC_VERSION_HEADER,
+            HeaderValue::from_static(DEFAULT_ANTHROPIC_VERSION),
+        );
+    }
     let start_time = Instant::now();
+
+    let upstream_body = match body.to_reqwest_body().await {
+        Ok(body) => body,
+        Err(err) => {
+            return AttemptOutcome::Fatal(http::error_response(
+                StatusCode::BAD_GATEWAY,
+                format!("Failed to read cached request body: {err}"),
+            ))
+        }
+    };
+
     let upstream_res = state
         .client
-        .post(upstream_url)
+        .request(method, upstream_url)
         .headers(request_headers)
-        .body(body.clone())
+        .body(upstream_body)
         .send()
         .await;
     match upstream_res {
+        Ok(res) if is_retryable_status(res.status()) => {
+            let response = build_proxy_response_buffered(
+                meta,
+                provider,
+                &upstream.id,
+                inbound_path,
+                res,
+                state.log.clone(),
+                start_time,
+                response_transform,
+            )
+            .await;
+            AttemptOutcome::Retryable {
+                message: format!("Upstream responded with {}", response.status()),
+                response: Some(response),
+            }
+        }
         Ok(res) => {
             let response = build_proxy_response(
                 meta,
@@ -194,7 +255,10 @@ async fn attempt_upstream(
             .await;
             AttemptOutcome::Success(response)
         }
-        Err(err) if is_retryable_error(&err) => AttemptOutcome::Retryable(err.to_string()),
+        Err(err) if is_retryable_error(&err) => AttemptOutcome::Retryable {
+            message: err.to_string(),
+            response: None,
+        },
         Err(err) => AttemptOutcome::Fatal(http::error_response(
             StatusCode::BAD_GATEWAY,
             format!("Upstream request failed: {err}"),
@@ -229,3 +293,20 @@ fn is_retryable_error(err: &reqwest::Error) -> bool {
     err.is_timeout() || err.is_connect()
 }
 
+fn is_retryable_status(status: StatusCode) -> bool {
+    // 对齐 new-api 的重试策略：429/307/5xx（排除 504/524）。
+    if status == StatusCode::TOO_MANY_REQUESTS || status == StatusCode::TEMPORARY_REDIRECT {
+        return true;
+    }
+    if status == StatusCode::GATEWAY_TIMEOUT {
+        return false;
+    }
+    if status.as_u16() == 524 {
+        // Cloudflare timeout.
+        return false;
+    }
+    status.is_server_error()
+}
+
+#[cfg(test)]
+mod tests;

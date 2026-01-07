@@ -12,6 +12,7 @@ export type UpstreamConfig = {
   api_key: string | null;
   priority: number | null;
   index: number | null;
+  enabled: boolean;
 };
 
 export type ProxyConfigFile = {
@@ -35,6 +36,7 @@ export type UpstreamForm = {
   apiKey: string;
   priority: string;
   index: string;
+  enabled: boolean;
 };
 
 export type ConfigForm = {

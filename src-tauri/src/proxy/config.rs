@@ -10,6 +10,10 @@ const CONFIG_FILE_NAME: &str = "config.jsonc";
 const DEFAULT_CONFIG_HEADER: &str =
     "// Token Proxy config (JSONC). Comments and trailing commas are supported.\n";
 
+fn default_enabled() -> bool {
+    true
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum UpstreamStrategy {
@@ -31,6 +35,8 @@ pub(crate) struct UpstreamConfig {
     pub(crate) api_key: Option<String>,
     pub(crate) priority: Option<i32>,
     pub(crate) index: Option<i32>,
+    #[serde(default = "default_enabled")]
+    pub(crate) enabled: bool,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -61,6 +67,7 @@ impl Default for ProxyConfigFile {
                     api_key: None,
                     priority: Some(0),
                     index: Some(0),
+                    enabled: true,
                 },
                 UpstreamConfig {
                     id: "openai-responses".to_string(),
@@ -69,6 +76,16 @@ impl Default for ProxyConfigFile {
                     api_key: None,
                     priority: Some(0),
                     index: Some(1),
+                    enabled: true,
+                },
+                UpstreamConfig {
+                    id: "claude-default".to_string(),
+                    provider: "claude".to_string(),
+                    base_url: "https://api.anthropic.com".to_string(),
+                    api_key: None,
+                    priority: Some(0),
+                    index: Some(2),
+                    enabled: true,
                 },
             ],
         }
@@ -215,6 +232,9 @@ fn normalize_upstreams(upstreams: &[UpstreamConfig]) -> Result<Vec<NormalizedUps
     };
     let mut normalized = Vec::with_capacity(upstreams.len());
     for (order, upstream) in upstreams.iter().enumerate() {
+        if !upstream.enabled {
+            continue;
+        }
         let provider = upstream.provider.trim();
         if provider.is_empty() {
             return Err(format!("Upstream {} provider cannot be empty.", upstream.id));

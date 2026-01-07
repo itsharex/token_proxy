@@ -306,3 +306,5 @@ fn map_usage_chat_to_responses(usage: &Value) -> Option<Value> {
     }))
 }
 
+#[cfg(test)]
+mod tests;

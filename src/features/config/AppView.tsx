@@ -116,24 +116,19 @@ function ConfigSidebar({ statusBadge, activeSection }: ConfigSidebarProps) {
                 value={section.id}
                 aria-current={isActive ? "page" : undefined}
                 className={cn(
-                  "group flex h-auto w-full items-start justify-start gap-3 rounded-md px-3 py-2 text-left transition-colors",
+                  "group flex h-auto w-full items-center justify-start gap-3 rounded-md px-3 py-2 text-left transition-colors",
                   "hover:bg-accent/60",
                   "data-[state=active]:bg-accent data-[state=active]:text-accent-foreground data-[state=active]:shadow-none"
                 )}
               >
                 <Icon
                   className={cn(
-                    "mt-0.5 size-4 shrink-0 text-muted-foreground transition-colors",
+                    "size-4 shrink-0 text-muted-foreground transition-colors",
                     isActive ? "text-foreground" : "group-hover:text-foreground"
                   )}
                   aria-hidden="true"
                 />
-                <span className="min-w-0">
-                  <span className="block truncate text-sm font-medium">{section.label}</span>
-                  <span className="mt-0.5 block truncate text-xs text-muted-foreground">
-                    {section.description}
-                  </span>
-                </span>
+                <span className="min-w-0 truncate text-sm font-medium">{section.label}</span>
               </TabsTrigger>
             );
           })}
@@ -160,7 +155,7 @@ type AppViewProps = {
   onToggleUpstreamKeys: () => void;
   onFormChange: (patch: Partial<ConfigForm>) => void;
   onStrategyChange: (value: ConfigForm["upstreamStrategy"]) => void;
-  onAddUpstream: () => void;
+  onAddUpstream: (upstream: ConfigForm["upstreams"][number]) => void;
   onRemoveUpstream: (index: number) => void;
   onChangeUpstream: (index: number, patch: Partial<ConfigForm["upstreams"][number]>) => void;
   onSave: () => void;

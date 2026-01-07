@@ -69,6 +69,42 @@ pub(super) async fn build_proxy_response(
     }
 }
 
+pub(super) async fn build_proxy_response_buffered(
+    meta: &RequestMeta,
+    provider: &str,
+    upstream_id: &str,
+    inbound_path: &str,
+    upstream_res: reqwest::Response,
+    log: Arc<LogWriter>,
+    start: Instant,
+    response_transform: FormatTransform,
+) -> Response {
+    let status = upstream_res.status();
+    let mut response_headers = http::filter_response_headers(upstream_res.headers());
+    let context = LogContext {
+        path: inbound_path.to_string(),
+        provider: provider.to_string(),
+        upstream_id: upstream_id.to_string(),
+        model: meta.model.clone(),
+        stream: meta.stream,
+        status: status.as_u16(),
+        upstream_request_id: http::extract_request_id(upstream_res.headers()),
+        start,
+    };
+    if response_transform != FormatTransform::None {
+        response_headers.remove(axum::http::header::CONTENT_LENGTH);
+    }
+    build_buffered_response(
+        status,
+        upstream_res,
+        response_headers,
+        context,
+        log,
+        response_transform,
+    )
+    .await
+}
+
 async fn build_stream_response(
     status: StatusCode,
     upstream_res: reqwest::Response,
@@ -507,3 +543,5 @@ fn stream_with_logging(
     )
 }
 
+#[cfg(test)]
+mod tests;

@@ -26,7 +26,8 @@ Example:
       "base_url": "https://api.openai.com",
       "api_key": null,
       "priority": 0,
-      "index": 0
+      "index": 0,
+      "enabled": true
     },
     {
       "id": "openai-responses",
@@ -34,13 +35,25 @@ Example:
       "base_url": "https://api.openai.com",
       "api_key": null,
       "priority": 0,
-      "index": 1
+      "index": 1,
+      "enabled": true
+    },
+    {
+      "id": "claude-default",
+      "provider": "claude",
+      "base_url": "https://api.anthropic.com",
+      "api_key": null,
+      "priority": 0,
+      "index": 2,
+      "enabled": true
     }
   ]
 }
 ```
 
 Notes:
-- Request format routing is built in: `/v1/chat/completions` prefers provider `openai`, `/v1/responses` prefers provider `openai-response`. When the preferred provider is missing, the proxy will translate between Chat Completions and Responses formats automatically.
+- Request routing is built in: `/v1/chat/completions` → `openai`, `/v1/responses` → `openai-response`, `/v1/messages` (and subpaths) / `/v1/complete` → `claude`. When the preferred OpenAI provider is missing, the proxy will translate between Chat Completions and Responses formats automatically (Claude is pass-through, no format conversion).
+- Claude auth uses `x-api-key`. If `anthropic-version` is missing, the proxy injects `2023-06-01` (override by providing the header explicitly).
 - `priority` sorts descending; `index` sorts ascending inside the same priority group.
 - Missing `index` values are auto-assigned globally after the current max index when saving.
+- `enabled` disables an upstream without deleting it; disabled upstreams are ignored during load balancing.

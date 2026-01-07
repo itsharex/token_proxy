@@ -13,6 +13,7 @@ const DEFAULT_UPSTREAMS: UpstreamForm[] = [
     apiKey: "",
     priority: "0",
     index: "0",
+    enabled: true,
   },
   {
     id: "openai-responses",
@@ -21,6 +22,16 @@ const DEFAULT_UPSTREAMS: UpstreamForm[] = [
     apiKey: "",
     priority: "0",
     index: "1",
+    enabled: true,
+  },
+  {
+    id: "claude-default",
+    provider: "claude",
+    baseUrl: "https://api.anthropic.com",
+    apiKey: "",
+    priority: "0",
+    index: "2",
+    enabled: true,
   },
 ];
 
@@ -43,6 +54,7 @@ export function createEmptyUpstream(): UpstreamForm {
     apiKey: "",
     priority: "",
     index: "",
+    enabled: true,
   };
 }
 
@@ -60,6 +72,7 @@ export function toForm(config: ProxyConfigFile): ConfigForm {
       apiKey: upstream.api_key ?? "",
       priority: upstream.priority === null ? "" : String(upstream.priority),
       index: upstream.index === null ? "" : String(upstream.index),
+      enabled: upstream.enabled,
     })),
   };
 }
@@ -79,6 +92,7 @@ export function toPayload(form: ConfigForm): ProxyConfigFile {
       api_key: upstream.apiKey.trim() ? upstream.apiKey.trim() : null,
       priority: parseOptionalInt(upstream.priority),
       index: parseOptionalInt(upstream.index),
+      enabled: upstream.enabled,
     })),
   };
 }
@@ -103,6 +117,10 @@ export function validate(form: ConfigForm) {
   }
   if (!form.upstreams.length) {
     return { valid: false, message: "At least one upstream is required." };
+  }
+  const hasEnabledUpstream = form.upstreams.some((upstream) => upstream.enabled);
+  if (!hasEnabledUpstream) {
+    return { valid: false, message: "At least one enabled upstream is required." };
   }
 
   const ids = new Set<string>();

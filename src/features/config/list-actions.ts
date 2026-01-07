@@ -1,9 +1,8 @@
 import { useCallback, type Dispatch, type SetStateAction } from "react";
 
-import { createEmptyUpstream } from "@/features/config/form";
 import type { ConfigForm } from "@/features/config/types";
 
-function updateListItem<T extends Record<string, string>>(
+function updateListItem<T extends Record<string, unknown>>(
   list: T[],
   index: number,
   patch: Partial<T>
@@ -28,10 +27,10 @@ export function useConfigListActions(
     [setForm]
   );
 
-  const addUpstream = useCallback(() => {
+  const addUpstreamWithValue = useCallback((upstream: ConfigForm["upstreams"][number]) => {
     setForm((prev) => ({
       ...prev,
-      upstreams: [...prev.upstreams, createEmptyUpstream()],
+      upstreams: [...prev.upstreams, upstream],
     }));
   }, [setForm]);
 
@@ -47,7 +46,7 @@ export function useConfigListActions(
 
   return {
     updateUpstream,
-    addUpstream,
+    addUpstream: addUpstreamWithValue,
     removeUpstream,
   };
 }

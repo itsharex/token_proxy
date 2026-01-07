@@ -46,24 +46,21 @@ fn extract_usage_from_event(value: &Value) -> Option<TokenUsage> {
 }
 
 fn usage_from_value(value: &Value) -> Option<TokenUsage> {
-    let input_tokens = value.get("input_tokens").and_then(Value::as_u64);
-    let output_tokens = value.get("output_tokens").and_then(Value::as_u64);
+    // Normalize both OpenAI Responses usage (`input_tokens`/`output_tokens`) and
+    // Chat Completions usage (`prompt_tokens`/`completion_tokens`) into a single shape.
+    let input_tokens = value
+        .get("input_tokens")
+        .and_then(Value::as_u64)
+        .or_else(|| value.get("prompt_tokens").and_then(Value::as_u64));
+    let output_tokens = value
+        .get("output_tokens")
+        .and_then(Value::as_u64)
+        .or_else(|| value.get("completion_tokens").and_then(Value::as_u64));
     let total_tokens = value.get("total_tokens").and_then(Value::as_u64);
     if input_tokens.is_some() || output_tokens.is_some() || total_tokens.is_some() {
         return Some(TokenUsage {
             input_tokens,
             output_tokens,
-            total_tokens,
-        });
-    }
-
-    let prompt_tokens = value.get("prompt_tokens").and_then(Value::as_u64);
-    let completion_tokens = value.get("completion_tokens").and_then(Value::as_u64);
-    let total_tokens = value.get("total_tokens").and_then(Value::as_u64);
-    if prompt_tokens.is_some() || completion_tokens.is_some() || total_tokens.is_some() {
-        return Some(TokenUsage {
-            input_tokens: prompt_tokens,
-            output_tokens: completion_tokens,
             total_tokens,
         });
     }

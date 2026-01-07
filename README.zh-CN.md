@@ -26,7 +26,8 @@
       "base_url": "https://api.openai.com",
       "api_key": null,
       "priority": 0,
-      "index": 0
+      "index": 0,
+      "enabled": true
     },
     {
       "id": "openai-responses",
@@ -34,13 +35,25 @@
       "base_url": "https://api.openai.com",
       "api_key": null,
       "priority": 0,
-      "index": 1
+      "index": 1,
+      "enabled": true
+    },
+    {
+      "id": "claude-default",
+      "provider": "claude",
+      "base_url": "https://api.anthropic.com",
+      "api_key": null,
+      "priority": 0,
+      "index": 2,
+      "enabled": true
     }
   ]
 }
 ```
 
 说明：
-- 路由规则内置：`/v1/chat/completions` 优先走 `openai`，`/v1/responses` 优先走 `openai-response`；当缺少对应 provider 时，代理会自动在 Chat Completions 与 Responses 格式之间互转。
+- 路由规则内置：`/v1/chat/completions` → `openai`，`/v1/responses` → `openai-response`，`/v1/messages`（及子路径）/`/v1/complete` → `claude`；当缺少对应 provider 时，代理会自动在 Chat Completions 与 Responses 格式之间互转（Claude 不做格式转换）。
+- Claude 鉴权使用 `x-api-key`；当请求未携带 `anthropic-version` 时，代理默认补 `2023-06-01`（可被请求头覆盖）。
 - `priority` 越大优先级越高；同优先级内按 `index` 升序。
 - `index` 缺失时，保存配置会在当前最大 `index` 之后按顺序全局自动补齐。
+- `enabled` 用于禁用某个 upstream 而不删除；禁用的 upstream 不参与负载均衡。
