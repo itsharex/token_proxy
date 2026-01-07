@@ -1,7 +1,5 @@
-# Tauri + React + Typescript
+# Token Proxy
 
-This template should help get you started developing with Tauri, React and Typescript in Vite.
+English | [中文](README.zh-CN.md)
 
-## Recommended IDE Setup
-
-- [VS Code](https://code.visualstudio.com/) + [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) + [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)
+A tool for proxying AI APIs, such as forwarding OpenAI API format, Gemini AI API format, Claude AI API format, running locally, used for counting total token usage, and also for load balancing, priority management, and similar functions.
