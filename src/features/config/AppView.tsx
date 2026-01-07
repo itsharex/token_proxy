@@ -12,7 +12,6 @@ import {
 } from "lucide-react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -84,25 +83,54 @@ type ConfigSidebarProps = {
   activeSection: ConfigSectionId;
 };
 
+type ConfigStatusIndicatorProps = {
+  statusBadge: StatusBadge;
+};
+
+function ConfigStatusIndicator({ statusBadge }: ConfigStatusIndicatorProps) {
+  const dotClassName = cn(
+    "size-1.5 rounded-full",
+    statusBadge.variant === "default"
+      ? "bg-primary"
+      : statusBadge.variant === "secondary"
+        ? "bg-muted-foreground/35"
+        : statusBadge.variant === "destructive"
+          ? "bg-destructive"
+          : "bg-border",
+    statusBadge.label === "Working" && "animate-pulse"
+  );
+
+  const textClassName = cn(
+    "truncate text-[11px] font-medium leading-none",
+    statusBadge.variant === "destructive" ? "text-destructive" : "text-muted-foreground"
+  );
+
+  return (
+    <div data-slot="config-sidebar-status" className="flex min-w-0 items-center gap-1.5">
+      <span aria-hidden="true" className={dotClassName} />
+      <span className={textClassName}>{statusBadge.label}</span>
+    </div>
+  );
+}
+
 function ConfigSidebar({ statusBadge, activeSection }: ConfigSidebarProps) {
   return (
     <aside
       data-slot="config-sidebar"
       className="flex min-h-0 flex-col border-r border-border/60 bg-background/60 backdrop-blur"
     >
-      <div className="flex items-center gap-3 px-5 py-4">
-        <div className="grid size-9 place-items-center rounded-lg border border-border/60 bg-background shadow-sm">
+      <div className="flex items-center gap-3 px-4 py-3">
+        <div className="grid size-8 place-items-center rounded-lg border border-border/60 bg-background shadow-sm">
           <Settings2 className="size-4 text-foreground" aria-hidden="true" />
         </div>
-        <div className="min-w-0">
-          <p className="title-font truncate text-base font-semibold text-foreground">Token Proxy</p>
-          <p className="truncate text-xs text-muted-foreground">Desktop configuration</p>
-        </div>
-        <div className="ml-auto">
-          <Badge variant={statusBadge.variant}>{statusBadge.label}</Badge>
+        <div className="min-w-0 flex-1">
+          <p className="title-font truncate text-sm font-semibold text-foreground">Token Proxy</p>
+          <div className="mt-1 min-w-0">
+            <ConfigStatusIndicator statusBadge={statusBadge} />
+          </div>
         </div>
       </div>
-      <ScrollArea data-slot="config-sidebar-scroll" className="min-h-0 flex-1 px-3 pb-4">
+      <ScrollArea data-slot="config-sidebar-scroll" className="min-h-0 flex-1 px-2 pb-4">
         <TabsList
           data-slot="config-sidebar-tabs"
           className="h-auto w-full flex-col items-stretch justify-start gap-1 bg-transparent p-0"
@@ -116,7 +144,7 @@ function ConfigSidebar({ statusBadge, activeSection }: ConfigSidebarProps) {
                 value={section.id}
                 aria-current={isActive ? "page" : undefined}
                 className={cn(
-                  "group flex h-auto w-full items-center justify-start gap-3 rounded-md px-3 py-2 text-left transition-colors",
+                  "group flex h-auto w-full items-center justify-start gap-2.5 rounded-md px-2.5 py-2 text-left transition-colors",
                   "hover:bg-accent/60",
                   "data-[state=active]:bg-accent data-[state=active]:text-accent-foreground data-[state=active]:shadow-none"
                 )}
@@ -224,7 +252,7 @@ export function AppView(props: AppViewProps) {
         }
       }}
       orientation="vertical"
-      className="relative z-10 grid h-full min-h-0 grid-cols-[280px_1fr]"
+      className="relative z-10 grid h-full min-h-0 grid-cols-[max-content_1fr]"
     >
       <ConfigSidebar statusBadge={props.statusBadge} activeSection={activeSection} />
       <section
