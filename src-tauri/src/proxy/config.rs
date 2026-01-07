@@ -41,6 +41,7 @@ pub(crate) struct ProxyConfigFile {
     pub(crate) log_path: String,
     #[serde(default)]
     pub(crate) upstream_strategy: UpstreamStrategy,
+    #[serde(default)]
     pub(crate) upstreams: Vec<UpstreamConfig>,
 }
 
@@ -193,9 +194,6 @@ impl UpstreamRuntime {
 }
 
 fn normalize_upstreams(upstreams: &[UpstreamConfig]) -> Result<Vec<NormalizedUpstream>, String> {
-    if upstreams.is_empty() {
-        return Err("Upstreams cannot be empty.".to_string());
-    }
     let (mut seen_ids, mut max_index) = (HashSet::new(), None::<i32>);
     for upstream in upstreams {
         let id = upstream.id.trim();
@@ -269,9 +267,6 @@ fn build_provider_upstreams(
             .entry(upstream.provider)
             .or_default()
             .push(upstream.runtime);
-    }
-    if grouped.is_empty() {
-        return Err("Upstreams cannot be empty.".to_string());
     }
     let mut output = HashMap::new();
     for (provider, upstreams) in grouped {
