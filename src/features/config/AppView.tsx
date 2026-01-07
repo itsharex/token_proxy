@@ -217,7 +217,7 @@ function ConfigToolbar({ section, status, canSave, isDirty, onReload, onSave }: 
         <p className="truncate text-xs text-muted-foreground">{section.description}</p>
       </div>
       <div className="flex items-center gap-2">
-        <Button type="button" variant="ghost" size="icon" onClick={onReload} disabled={!canReload}>
+        <Button type="button" variant="outline" size="icon" onClick={onReload} disabled={!canReload}>
           <RefreshCw className={isLoading ? "animate-spin" : undefined} aria-hidden="true" />
         </Button>
         <Button type="button" onClick={onSave} disabled={!canSave}>
