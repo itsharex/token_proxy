@@ -23,19 +23,15 @@ import { Separator } from "@/components/ui/separator";
 type ConfigFileCardProps = {
   configPath: string;
   savedAt: string;
-  status: "idle" | "loading" | "saving" | "saved" | "error";
   isDirty: boolean;
   onReset: () => void;
-  onReload: () => void;
 };
 
 export function ConfigFileCard({
   configPath,
   savedAt,
-  status,
   isDirty,
   onReset,
-  onReload,
 }: ConfigFileCardProps) {
   return (
     <Card data-slot="config-file-card">
@@ -64,7 +60,7 @@ export function ConfigFileCard({
           </div>
         ) : null}
       </CardContent>
-      <CardFooter className="flex flex-wrap gap-2">
+      <CardFooter>
         <AlertDialog>
           <AlertDialogTrigger asChild>
             <Button type="button" variant="outline" disabled={!isDirty}>
@@ -86,14 +82,6 @@ export function ConfigFileCard({
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
-        <Button
-          type="button"
-          variant="ghost"
-          onClick={onReload}
-          disabled={status === "loading" || isDirty}
-        >
-          Reload
-        </Button>
       </CardFooter>
     </Card>
   );

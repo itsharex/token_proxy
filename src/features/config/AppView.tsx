@@ -195,11 +195,14 @@ type ConfigToolbarProps = {
   section: ConfigSection;
   status: AppViewProps["status"];
   canSave: boolean;
+  isDirty: boolean;
+  onReload: () => void;
   onSave: () => void;
 };
 
-function ConfigToolbar({ section, status, canSave, onSave }: ConfigToolbarProps) {
+function ConfigToolbar({ section, status, canSave, isDirty, onReload, onSave }: ConfigToolbarProps) {
   const saveLabel = status === "saving" ? "Saving…" : "Save";
+  const canReload = status !== "loading" && !isDirty;
   return (
     <header
       data-slot="config-toolbar"
@@ -210,6 +213,9 @@ function ConfigToolbar({ section, status, canSave, onSave }: ConfigToolbarProps)
         <p className="truncate text-xs text-muted-foreground">{section.description}</p>
       </div>
       <div className="flex items-center gap-2">
+        <Button type="button" variant="ghost" onClick={onReload} disabled={!canReload}>
+          Reload
+        </Button>
         <Button type="button" onClick={onSave} disabled={!canSave}>
           {saveLabel}
         </Button>
@@ -263,6 +269,8 @@ export function AppView(props: AppViewProps) {
           section={sectionMeta}
           status={props.status}
           canSave={props.canSave}
+          isDirty={props.isDirty}
+          onReload={props.onReload}
           onSave={props.onSave}
         />
         <ScrollArea data-slot="config-main-scroll" className="min-h-0 flex-1">
@@ -294,10 +302,8 @@ export function AppView(props: AppViewProps) {
               <ConfigFileCard
                 configPath={props.configPath}
                 savedAt={props.savedAt}
-                status={props.status}
                 isDirty={props.isDirty}
                 onReset={props.onReset}
-                onReload={props.onReload}
               />
             </TabsContent>
             <TabsContent value="validation" className="mt-0">

@@ -10,9 +10,9 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { PasswordInput } from "@/components/ui/password-input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { getUpstreamLabel } from "@/features/config/cards/upstreams/constants";
 import type { UpstreamEditorState } from "@/features/config/cards/upstreams/types";
@@ -68,10 +68,15 @@ function UpstreamEditorFields({
       <EditorField label="Base URL" htmlFor="upstream-editor-baseUrl">
         <Input id="upstream-editor-baseUrl" value={draft.baseUrl} onChange={(e) => onChangeDraft({ baseUrl: e.target.value })} placeholder="https://api.openai.com" />
       </EditorField>
-      <EditorField label="API Key" htmlFor="upstream-editor-apiKey" action={
-        <Button type="button" variant="ghost" size="sm" onClick={onToggleApiKeys}>{showApiKeys ? "Hide" : "Show"}</Button>
-      }>
-        <Input id="upstream-editor-apiKey" type={showApiKeys ? "text" : "password"} value={draft.apiKey} onChange={(e) => onChangeDraft({ apiKey: e.target.value })} placeholder="Optional" />
+      <EditorField label="API Key" htmlFor="upstream-editor-apiKey">
+        <PasswordInput
+          id="upstream-editor-apiKey"
+          visible={showApiKeys}
+          onVisibilityChange={onToggleApiKeys}
+          value={draft.apiKey}
+          onChange={(e) => onChangeDraft({ apiKey: e.target.value })}
+          placeholder="Optional"
+        />
       </EditorField>
       <div className="grid gap-4 sm:grid-cols-2">
         <EditorField label="Priority" htmlFor="upstream-editor-priority">

@@ -1,4 +1,4 @@
-import { Columns3, Pencil, ToggleLeft, ToggleRight, Trash2 } from "lucide-react";
+import { Columns3, Eye, EyeOff, Pencil, ToggleLeft, ToggleRight, Trash2 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -37,8 +37,8 @@ export function UpstreamsToolbar({
         </Button>
       </div>
       {apiKeyVisible ? (
-        <Button type="button" variant="ghost" size="sm" onClick={onToggleApiKeys}>
-          {showApiKeys ? "Hide Keys" : "Show Keys"}
+        <Button type="button" variant="ghost" size="icon-sm" onClick={onToggleApiKeys} aria-label={showApiKeys ? "Hide API Keys" : "Show API Keys"}>
+          {showApiKeys ? <EyeOff className="size-4" aria-hidden="true" /> : <Eye className="size-4" aria-hidden="true" />}
         </Button>
       ) : null}
     </div>

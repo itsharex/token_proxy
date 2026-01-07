@@ -1,7 +1,7 @@
-import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { PasswordInput } from "@/components/ui/password-input";
 import type { ConfigForm } from "@/features/config/types";
 
 type ProxyCoreCardProps = {
@@ -47,18 +47,14 @@ export function ProxyCoreCard({
         </div>
         <div className="grid gap-2">
           <Label htmlFor="proxy-key">Local API Key</Label>
-          <div className="flex flex-wrap items-center gap-2">
-            <Input
-              id="proxy-key"
-              type={showLocalKey ? "text" : "password"}
-              value={form.localApiKey}
-              onChange={(event) => onChange({ localApiKey: event.target.value })}
-              placeholder="Optional"
-            />
-            <Button type="button" variant="outline" size="sm" onClick={onToggleLocalKey}>
-              {showLocalKey ? "Hide" : "Show"}
-            </Button>
-          </div>
+          <PasswordInput
+            id="proxy-key"
+            visible={showLocalKey}
+            onVisibilityChange={onToggleLocalKey}
+            value={form.localApiKey}
+            onChange={(event) => onChange({ localApiKey: event.target.value })}
+            placeholder="Optional"
+          />
           <p className="text-xs text-muted-foreground">Leave empty to disable local auth.</p>
         </div>
         <div className="grid gap-2">
