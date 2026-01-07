@@ -748,9 +748,20 @@ mod tests {
             index: 0,
             order: 0,
         };
+        // openai: /v1/chat/completions
         assert_eq!(
             upstream_trailing_slash.upstream_url("/v1/chat/completions"),
             "https://api.example.com/openai/v1/chat/completions"
+        );
+        // openai-response: /v1/responses
+        assert_eq!(
+            upstream_trailing_slash.upstream_url("/v1/responses"),
+            "https://api.example.com/openai/v1/responses"
+        );
+        // claude: /v1/messages
+        assert_eq!(
+            upstream_trailing_slash.upstream_url("/v1/messages"),
+            "https://api.example.com/openai/v1/messages"
         );
     }
 }
