@@ -22,15 +22,19 @@ const X_CLAUDE_API_KEY: &str = "x-claude-api-key";
 
 pub(crate) fn ensure_local_auth(config: &ProxyConfig, headers: &HeaderMap) -> Result<(), Response> {
     let Some(expected) = config.local_api_key.as_ref() else {
+        tracing::debug!("no local_api_key configured, skipping local auth");
         return Ok(());
     };
+    tracing::debug!("local auth required, checking Authorization header");
     let Some(header) = headers.get(AUTHORIZATION) else {
+        tracing::warn!("missing Authorization header");
         return Err(error_response(
             StatusCode::UNAUTHORIZED,
             "Missing local access key.",
         ));
     };
     let Ok(value) = header.to_str() else {
+        tracing::warn!("Authorization header is not valid UTF-8");
         return Err(error_response(
             StatusCode::UNAUTHORIZED,
             "Local access key is invalid.",
@@ -38,12 +42,26 @@ pub(crate) fn ensure_local_auth(config: &ProxyConfig, headers: &HeaderMap) -> Re
     };
     let expected_value = format!("Bearer {expected}");
     if value != expected_value {
+        tracing::warn!(
+            got = %mask_key(value),
+            expected = %mask_key(&expected_value),
+            "authorization mismatch"
+        );
         return Err(error_response(
             StatusCode::UNAUTHORIZED,
             "Local access key is invalid.",
         ));
     }
+    tracing::debug!("local auth passed");
     Ok(())
+}
+
+/// 遮蔽敏感 key，仅显示前 8 字符
+fn mask_key(key: &str) -> String {
+    if key.len() <= 8 {
+        return key.to_string();
+    }
+    format!("{}...", &key[..8])
 }
 
 #[derive(Clone, Default)]
@@ -66,7 +84,10 @@ pub(crate) fn resolve_request_auth(
 
     if let Some(value) = headers.get(X_OPENAI_API_KEY) {
         let Ok(value) = value.to_str() else {
-            return Err(error_response(StatusCode::UNAUTHORIZED, "Upstream API key is invalid."));
+            return Err(error_response(
+                StatusCode::UNAUTHORIZED,
+                "Upstream API key is invalid.",
+            ));
         };
         auth.openai_bearer = Some(bearer_header(value).ok_or_else(|| {
             error_response(
@@ -83,7 +104,10 @@ pub(crate) fn resolve_request_auth(
         .or_else(|| headers.get(X_CLAUDE_API_KEY))
     {
         let Ok(_) = value.to_str() else {
-            return Err(error_response(StatusCode::UNAUTHORIZED, "Upstream API key is invalid."));
+            return Err(error_response(
+                StatusCode::UNAUTHORIZED,
+                "Upstream API key is invalid.",
+            ));
         };
         auth.claude_api_key = Some(value.clone());
     }
@@ -101,19 +125,34 @@ pub(crate) fn resolve_upstream_auth(
     upstream: &UpstreamRuntime,
     request_auth: &RequestAuth,
 ) -> Result<Option<UpstreamAuthHeader>, Response> {
+    tracing::debug!(
+        provider = %provider,
+        upstream_id = %upstream.id,
+        has_upstream_key = upstream.api_key.is_some(),
+        has_openai_bearer = request_auth.openai_bearer.is_some(),
+        has_claude_key = request_auth.claude_api_key.is_some(),
+        has_auth_fallback = request_auth.authorization_fallback.is_some(),
+        "resolving upstream auth"
+    );
+
     match provider {
         "claude" => {
             let value = match upstream.api_key.as_ref() {
-                Some(key) => HeaderValue::from_str(key).map_err(|_| {
-                    error_response(
-                        StatusCode::UNAUTHORIZED,
-                        "Upstream API key contains invalid characters.",
-                    )
-                })?,
+                Some(key) => {
+                    tracing::debug!("using upstream.api_key for Claude");
+                    HeaderValue::from_str(key).map_err(|_| {
+                        error_response(
+                            StatusCode::UNAUTHORIZED,
+                            "Upstream API key contains invalid characters.",
+                        )
+                    })?
+                }
                 None => {
                     let Some(value) = request_auth.claude_api_key.clone() else {
+                        tracing::warn!("no API key for Claude");
                         return Ok(None);
                     };
+                    tracing::debug!("using request_auth.claude_api_key for Claude");
                     value
                 }
             };
@@ -125,6 +164,7 @@ pub(crate) fn resolve_upstream_auth(
         }
         _ => {
             if let Some(key) = upstream.api_key.as_ref() {
+                tracing::debug!(provider = %provider, "using upstream.api_key");
                 let value = bearer_header(key).ok_or_else(|| {
                     error_response(
                         StatusCode::UNAUTHORIZED,
@@ -138,6 +178,7 @@ pub(crate) fn resolve_upstream_auth(
             }
 
             if let Some(value) = request_auth.openai_bearer.clone() {
+                tracing::debug!(provider = %provider, "using request_auth.openai_bearer");
                 return Ok(Some(UpstreamAuthHeader {
                     name: AUTHORIZATION,
                     value,
@@ -145,12 +186,14 @@ pub(crate) fn resolve_upstream_auth(
             }
 
             if let Some(value) = request_auth.authorization_fallback.clone() {
+                tracing::debug!(provider = %provider, "using request_auth.authorization_fallback");
                 return Ok(Some(UpstreamAuthHeader {
                     name: AUTHORIZATION,
                     value,
                 }));
             }
 
+            tracing::warn!(provider = %provider, "no API key found");
             Ok(None)
         }
     }

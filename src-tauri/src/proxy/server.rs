@@ -13,6 +13,8 @@ use std::{
 };
 use tokio::net::TcpListener;
 
+use super::log::LogWriter;
+use super::sqlite;
 use super::{
     config::ProxyConfig,
     http,
@@ -22,11 +24,8 @@ use super::{
     },
     request_body::ReplayableBody,
     upstream::forward_upstream_request,
-    ProxyState,
-    RequestMeta,
+    ProxyState, RequestMeta,
 };
-use super::log::LogWriter;
-use super::sqlite;
 
 const PROVIDER_CLAUDE: &str = "claude";
 const CLAUDE_MESSAGES_PREFIX: &str = "/v1/messages";
@@ -198,13 +197,24 @@ async fn proxy_request(
     headers: HeaderMap,
     body: Body,
 ) -> Response {
+    let path = uri.path();
+    tracing::info!(method = %method, path = %path, "incoming request");
+    tracing::debug!(headers = ?headers.keys().collect::<Vec<_>>(), "request headers");
+
     if let Err(response) = http::ensure_local_auth(&state.config, &headers) {
+        tracing::warn!("local auth failed");
         return response;
     }
     let (path, _) = extract_request_path(&uri);
     let plan = match resolve_dispatch_plan(&state.config, &path) {
-        Ok(plan) => plan,
-        Err(response) => return response,
+        Ok(plan) => {
+            tracing::debug!(provider = %plan.provider, "dispatch plan resolved");
+            plan
+        }
+        Err(response) => {
+            tracing::warn!("no dispatch plan found");
+            return response;
+        }
     };
 
     let body = match ReplayableBody::from_body(body).await {
@@ -287,7 +297,10 @@ async fn parse_request_meta_best_effort(body: &ReplayableBody) -> RequestMeta {
             }
         }
     };
-    let stream = value.get("stream").and_then(Value::as_bool).unwrap_or(false);
+    let stream = value
+        .get("stream")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
     let model = value
         .get("model")
         .and_then(Value::as_str)
@@ -319,8 +332,7 @@ async fn maybe_transform_request_body(
         ));
     };
 
-    let outbound_bytes = transform_request_body(transform, &bytes).map_err(|message| {
-        http::error_response(StatusCode::BAD_REQUEST, message)
-    })?;
+    let outbound_bytes = transform_request_body(transform, &bytes)
+        .map_err(|message| http::error_response(StatusCode::BAD_REQUEST, message))?;
     Ok(ReplayableBody::from_bytes(outbound_bytes))
 }
