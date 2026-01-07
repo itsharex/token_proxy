@@ -16,6 +16,8 @@ pub(crate) struct TokenUsage {
 pub(crate) struct LogEntry {
     pub(crate) ts_ms: u128,
     pub(crate) path: String,
+    pub(crate) provider: String,
+    pub(crate) upstream_id: String,
     pub(crate) model: Option<String>,
     pub(crate) stream: bool,
     pub(crate) status: u16,
@@ -27,6 +29,8 @@ pub(crate) struct LogEntry {
 #[derive(Clone)]
 pub(crate) struct LogContext {
     pub(crate) path: String,
+    pub(crate) provider: String,
+    pub(crate) upstream_id: String,
     pub(crate) model: Option<String>,
     pub(crate) stream: bool,
     pub(crate) status: u16,
@@ -73,6 +77,8 @@ pub(crate) fn build_log_entry(context: &LogContext, usage: Option<TokenUsage>) -
     LogEntry {
         ts_ms: now_ms(),
         path: context.path.clone(),
+        provider: context.provider.clone(),
+        upstream_id: context.upstream_id.clone(),
         model: context.model.clone(),
         stream: context.stream,
         status: context.status,

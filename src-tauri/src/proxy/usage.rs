@@ -1,76 +1,31 @@
 use axum::body::Bytes;
 use serde_json::Value;
 
+use super::sse::SseEventParser;
 use super::log::TokenUsage;
 
 pub(crate) struct SseUsageCollector {
-    buffer: String,
-    current_data: String,
+    parser: SseEventParser,
     usage: Option<TokenUsage>,
 }
 
 impl SseUsageCollector {
     pub(crate) fn new() -> Self {
         Self {
-            buffer: String::new(),
-            current_data: String::new(),
+            parser: SseEventParser::new(),
             usage: None,
         }
     }
 
     pub(crate) fn push_chunk(&mut self, chunk: &[u8]) {
-        let text = String::from_utf8_lossy(chunk);
-        self.buffer.push_str(&text);
-        while let Some(pos) = self.buffer.find('\n') {
-            let mut line = self.buffer[..pos].to_string();
-            self.buffer.drain(..=pos);
-            if line.ends_with('\r') {
-                line.pop();
-            }
-            self.process_line(&line);
-        }
+        let usage = &mut self.usage;
+        self.parser.push_chunk(chunk, |data| update_usage(usage, &data));
     }
 
     pub(crate) fn finish(&mut self) -> Option<TokenUsage> {
-        if !self.buffer.is_empty() {
-            let mut buffer = std::mem::take(&mut self.buffer);
-            if buffer.ends_with('\r') {
-                buffer.pop();
-            }
-            self.process_line(&buffer);
-        }
-        self.flush_event();
+        let usage = &mut self.usage;
+        self.parser.finish(|data| update_usage(usage, &data));
         self.usage.clone()
-    }
-
-    fn process_line(&mut self, line: &str) {
-        if line.is_empty() {
-            self.flush_event();
-            return;
-        }
-        if let Some(data) = line.strip_prefix("data:") {
-            let data = data.trim_start();
-            if !self.current_data.is_empty() {
-                self.current_data.push('\n');
-            }
-            self.current_data.push_str(data);
-        }
-    }
-
-    fn flush_event(&mut self) {
-        if self.current_data.is_empty() {
-            return;
-        }
-        let data = std::mem::take(&mut self.current_data);
-        let data = data.trim();
-        if data == "[DONE]" {
-            return;
-        }
-        if let Ok(value) = serde_json::from_str::<Value>(data) {
-            if let Some(usage) = extract_usage_from_event(&value) {
-                self.usage = Some(usage);
-            }
-        }
     }
 }
 
@@ -113,4 +68,16 @@ fn usage_from_value(value: &Value) -> Option<TokenUsage> {
         });
     }
     None
+}
+
+fn update_usage(usage: &mut Option<TokenUsage>, data: &str) {
+    if data == "[DONE]" {
+        return;
+    }
+    let Ok(value) = serde_json::from_str::<Value>(data) else {
+        return;
+    };
+    if let Some(updated) = extract_usage_from_event(&value) {
+        *usage = Some(updated);
+    }
 }

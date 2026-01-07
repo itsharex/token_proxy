@@ -1,5 +1,8 @@
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+use std::{
+    collections::{HashMap, HashSet},
+    path::{Path, PathBuf},
+};
 use tauri::{path::BaseDirectory, AppHandle, Manager};
 
 const CONFIG_DIR: &str = "token_proxy";
@@ -8,9 +11,26 @@ const DEFAULT_CONFIG_HEADER: &str =
     "// Token Proxy config (JSONC). Comments and trailing commas are supported.\n";
 
 #[derive(Clone, Serialize, Deserialize)]
-pub(crate) struct OpenAiConfig {
+#[serde(rename_all = "snake_case")]
+pub(crate) enum UpstreamStrategy {
+    PriorityRoundRobin,
+    PriorityFillFirst,
+}
+
+impl Default for UpstreamStrategy {
+    fn default() -> Self {
+        Self::PriorityRoundRobin
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub(crate) struct UpstreamConfig {
+    pub(crate) id: String,
+    pub(crate) provider: String,
     pub(crate) base_url: String,
     pub(crate) api_key: Option<String>,
+    pub(crate) priority: Option<i32>,
+    pub(crate) index: Option<i32>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -19,7 +39,9 @@ pub(crate) struct ProxyConfigFile {
     pub(crate) port: u16,
     pub(crate) local_api_key: Option<String>,
     pub(crate) log_path: String,
-    pub(crate) openai: OpenAiConfig,
+    #[serde(default)]
+    pub(crate) upstream_strategy: UpstreamStrategy,
+    pub(crate) upstreams: Vec<UpstreamConfig>,
 }
 
 impl Default for ProxyConfigFile {
@@ -29,10 +51,25 @@ impl Default for ProxyConfigFile {
             port: 9208,
             local_api_key: None,
             log_path: "proxy.log".to_string(),
-            openai: OpenAiConfig {
-                base_url: "https://api.openai.com".to_string(),
-                api_key: None,
-            },
+            upstream_strategy: UpstreamStrategy::PriorityRoundRobin,
+            upstreams: vec![
+                UpstreamConfig {
+                    id: "openai-default".to_string(),
+                    provider: "openai".to_string(),
+                    base_url: "https://api.openai.com".to_string(),
+                    api_key: None,
+                    priority: Some(0),
+                    index: Some(0),
+                },
+                UpstreamConfig {
+                    id: "openai-responses".to_string(),
+                    provider: "openai-response".to_string(),
+                    base_url: "https://api.openai.com".to_string(),
+                    api_key: None,
+                    priority: Some(0),
+                    index: Some(1),
+                },
+            ],
         }
     }
 }
@@ -42,9 +79,30 @@ pub(crate) struct ProxyConfig {
     pub(crate) host: String,
     pub(crate) port: u16,
     pub(crate) local_api_key: Option<String>,
-    pub(crate) upstream_api_key: Option<String>,
-    pub(crate) upstream_base_url: String,
     pub(crate) log_path: PathBuf,
+    pub(crate) upstream_strategy: UpstreamStrategy,
+    pub(crate) upstreams: HashMap<String, ProviderUpstreams>,
+}
+
+#[derive(Clone)]
+pub(crate) struct ProviderUpstreams {
+    pub(crate) groups: Vec<UpstreamGroup>,
+}
+
+#[derive(Clone)]
+pub(crate) struct UpstreamGroup {
+    pub(crate) priority: i32,
+    pub(crate) items: Vec<UpstreamRuntime>,
+}
+
+#[derive(Clone)]
+pub(crate) struct UpstreamRuntime {
+    pub(crate) id: String,
+    pub(crate) base_url: String,
+    pub(crate) api_key: Option<String>,
+    pub(crate) priority: i32,
+    pub(crate) index: i32,
+    order: usize,
 }
 
 impl ProxyConfig {
@@ -52,14 +110,13 @@ impl ProxyConfig {
         format!("{}:{}", self.host, self.port)
     }
 
-    pub(crate) fn upstream_url(&self, path: &str) -> String {
-        let base = self.upstream_base_url.trim_end_matches('/');
-        format!("{base}{path}")
-    }
-
     pub(crate) async fn load(app: &AppHandle) -> Result<Self, String> {
         let config = load_config_file(app).await?;
         build_runtime_config(app, config)
+    }
+
+    pub(crate) fn provider_upstreams(&self, provider: &str) -> Option<&ProviderUpstreams> {
+        self.upstreams.get(provider)
     }
 }
 
@@ -78,20 +135,171 @@ pub(crate) async fn read_config(app: AppHandle) -> Result<ConfigResponse, String
     })
 }
 
-pub(crate) async fn write_config(app: AppHandle, config: ProxyConfigFile) -> Result<(), String> {
+pub(crate) async fn write_config(
+    app: AppHandle,
+    mut config: ProxyConfigFile,
+) -> Result<(), String> {
+    fill_missing_upstream_indices(&mut config.upstreams)?;
+    build_runtime_config(&app, config.clone())?;
     save_config_file(&app, &config).await
 }
 
 fn build_runtime_config(app: &AppHandle, config: ProxyConfigFile) -> Result<ProxyConfig, String> {
     let log_path = resolve_log_path(app, &config.log_path)?;
+    let normalized_upstreams = normalize_upstreams(&config.upstreams)?;
+    let upstreams = build_provider_upstreams(normalized_upstreams)?;
     Ok(ProxyConfig {
         host: config.host,
         port: config.port,
         local_api_key: config.local_api_key,
-        upstream_api_key: config.openai.api_key,
-        upstream_base_url: config.openai.base_url,
         log_path,
+        upstream_strategy: config.upstream_strategy,
+        upstreams,
     })
+}
+
+fn fill_missing_upstream_indices(upstreams: &mut [UpstreamConfig]) -> Result<(), String> {
+    let mut max_index: Option<i32> = None;
+    for upstream in upstreams.iter() {
+        if let Some(index) = upstream.index {
+            max_index = Some(max_index.map_or(index, |current| current.max(index)));
+        }
+    }
+    let mut next_index = match max_index {
+        Some(value) => value
+            .checked_add(1)
+            .ok_or_else(|| "Upstream index is out of range.".to_string())?,
+        None => 0,
+    };
+    for upstream in upstreams.iter_mut() {
+        if upstream.index.is_none() {
+            upstream.index = Some(assign_next_index(&mut next_index)?);
+        }
+    }
+    Ok(())
+}
+
+#[derive(Clone)]
+struct NormalizedUpstream {
+    provider: String,
+    runtime: UpstreamRuntime,
+}
+
+impl UpstreamRuntime {
+    pub(crate) fn upstream_url(&self, path: &str) -> String {
+        let base = self.base_url.trim_end_matches('/');
+        format!("{base}{path}")
+    }
+}
+
+fn normalize_upstreams(upstreams: &[UpstreamConfig]) -> Result<Vec<NormalizedUpstream>, String> {
+    if upstreams.is_empty() {
+        return Err("Upstreams cannot be empty.".to_string());
+    }
+    let (mut seen_ids, mut max_index) = (HashSet::new(), None::<i32>);
+    for upstream in upstreams {
+        let id = upstream.id.trim();
+        if id.is_empty() {
+            return Err("Upstream id cannot be empty.".to_string());
+        }
+        if !seen_ids.insert(id.to_string()) {
+            return Err(format!("Upstream id already exists: {id}."));
+        }
+        if let Some(index) = upstream.index {
+            max_index = Some(max_index.map_or(index, |current| current.max(index)));
+        }
+    }
+    let mut next_index = match max_index {
+        Some(value) => value
+            .checked_add(1)
+            .ok_or_else(|| "Upstream index is out of range.".to_string())?,
+        None => 0,
+    };
+    let mut normalized = Vec::with_capacity(upstreams.len());
+    for (order, upstream) in upstreams.iter().enumerate() {
+        let provider = upstream.provider.trim();
+        if provider.is_empty() {
+            return Err(format!("Upstream {} provider cannot be empty.", upstream.id));
+        }
+        let base_url = upstream.base_url.trim();
+        if base_url.is_empty() {
+            return Err(format!("Upstream {} base_url cannot be empty.", upstream.id));
+        }
+        // When index is missing, assign sequentially after the global max for stable ordering.
+        let index = match upstream.index {
+            Some(value) => value,
+            None => assign_next_index(&mut next_index)?,
+        };
+        let api_key = upstream
+            .api_key
+            .as_ref()
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+            .map(|value| value.to_string());
+        let runtime = UpstreamRuntime {
+            id: upstream.id.trim().to_string(),
+            base_url: base_url.to_string(),
+            api_key,
+            priority: upstream.priority.unwrap_or(0),
+            index,
+            order,
+        };
+        normalized.push(NormalizedUpstream {
+            provider: provider.to_string(),
+            runtime,
+        });
+    }
+    Ok(normalized)
+}
+
+fn assign_next_index(next_index: &mut i32) -> Result<i32, String> {
+    let current = *next_index;
+    *next_index = next_index
+        .checked_add(1)
+        .ok_or_else(|| "Upstream index is out of range.".to_string())?;
+    Ok(current)
+}
+
+fn build_provider_upstreams(
+    upstreams: Vec<NormalizedUpstream>,
+) -> Result<HashMap<String, ProviderUpstreams>, String> {
+    let mut grouped: HashMap<String, Vec<UpstreamRuntime>> = HashMap::new();
+    for upstream in upstreams {
+        grouped
+            .entry(upstream.provider)
+            .or_default()
+            .push(upstream.runtime);
+    }
+    if grouped.is_empty() {
+        return Err("Upstreams cannot be empty.".to_string());
+    }
+    let mut output = HashMap::new();
+    for (provider, upstreams) in grouped {
+        let groups = group_upstreams_by_priority(upstreams);
+        output.insert(provider, ProviderUpstreams { groups });
+    }
+    Ok(output)
+}
+
+fn group_upstreams_by_priority(mut upstreams: Vec<UpstreamRuntime>) -> Vec<UpstreamGroup> {
+    upstreams.sort_by(|left, right| {
+        right
+            .priority
+            .cmp(&left.priority)
+            .then_with(|| left.index.cmp(&right.index))
+            .then_with(|| left.order.cmp(&right.order))
+    });
+    let mut groups: Vec<UpstreamGroup> = Vec::new();
+    for upstream in upstreams {
+        match groups.last_mut() {
+            Some(group) if group.priority == upstream.priority => group.items.push(upstream),
+            _ => groups.push(UpstreamGroup {
+                priority: upstream.priority,
+                items: vec![upstream],
+            }),
+        }
+    }
+    groups
 }
 
 async fn load_config_file(app: &AppHandle) -> Result<ProxyConfigFile, String> {
@@ -359,19 +567,19 @@ async fn ensure_parent_dir(path: &Path) -> Result<(), String> {
         .map_err(|err| format!("Failed to create config directory: {err}"))
 }
 
-/// 配置目录：使用 BaseDirectory::AppConfig 下的 token_proxy 目录
+/// Config directory: BaseDirectory::AppConfig/token_proxy
 fn config_dir_path(app: &AppHandle) -> Result<PathBuf, String> {
     app.path()
         .resolve(CONFIG_DIR, BaseDirectory::AppConfig)
         .map_err(|err| format!("Failed to resolve config dir: {err}"))
 }
 
-/// 配置文件路径：基于配置目录
+/// Config file path: based on the config directory
 fn config_file_path(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(config_dir_path(app)?.join(CONFIG_FILE_NAME))
 }
 
-/// 日志路径：相对路径基于配置目录
+/// Log path: relative paths are based on the config directory
 fn resolve_log_path(app: &AppHandle, log_path: &str) -> Result<PathBuf, String> {
     let path = PathBuf::from(log_path);
     if path.is_absolute() {

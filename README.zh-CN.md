@@ -9,3 +9,38 @@
 - 配置文件：`config.jsonc`（支持注释与尾随逗号）。
 - 位置：Tauri 配置目录。
 - 保存会重写文件；仅保留文件头部注释块。
+
+示例：
+
+```jsonc
+{
+  "host": "127.0.0.1",
+  "port": 9208,
+  "local_api_key": null,
+  "log_path": "proxy.log",
+  "upstream_strategy": "priority_round_robin",
+  "upstreams": [
+    {
+      "id": "openai-default",
+      "provider": "openai",
+      "base_url": "https://api.openai.com",
+      "api_key": null,
+      "priority": 0,
+      "index": 0
+    },
+    {
+      "id": "openai-responses",
+      "provider": "openai-response",
+      "base_url": "https://api.openai.com",
+      "api_key": null,
+      "priority": 0,
+      "index": 1
+    }
+  ]
+}
+```
+
+说明：
+- 路由规则内置：`/v1/chat/completions` 优先走 `openai`，`/v1/responses` 优先走 `openai-response`；当缺少对应 provider 时，代理会自动在 Chat Completions 与 Responses 格式之间互转。
+- `priority` 越大优先级越高；同优先级内按 `index` 升序。
+- `index` 缺失时，保存配置会在当前最大 `index` 之后按顺序全局自动补齐。
