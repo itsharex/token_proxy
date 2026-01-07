@@ -1,5 +1,3 @@
-import type { ReactNode } from "react";
-
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -12,7 +10,25 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import {
   type ConfigForm,
   type UpstreamForm,
@@ -24,25 +40,12 @@ export type StatusBadge = {
   variant: "default" | "secondary" | "destructive" | "outline";
 };
 
-type SelectProps<TValue extends string> = {
-  id?: string;
-  value: TValue;
-  onChange: (value: TValue) => void;
-  children: ReactNode;
-};
+const UPSTREAM_STRATEGY_VALUES: ReadonlySet<string> = new Set(
+  UPSTREAM_STRATEGIES.map((strategy) => strategy.value)
+);
 
-function Select<TValue extends string>({ id, value, onChange, children }: SelectProps<TValue>) {
-  return (
-    <select
-      data-slot="select"
-      id={id}
-      value={value}
-      onChange={(event) => onChange(event.target.value as TValue)}
-      className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-    >
-      {children}
-    </select>
-  );
+function toUpstreamStrategy(value: string): ConfigForm["upstreamStrategy"] | null {
+  return UPSTREAM_STRATEGY_VALUES.has(value) ? (value as ConfigForm["upstreamStrategy"]) : null;
 }
 
 type HeaderSectionProps = {
@@ -157,12 +160,25 @@ export function StrategyCard({ strategy, onChange }: StrategyCardProps) {
       <CardContent className="space-y-3">
         <div className="grid gap-2">
           <Label htmlFor="upstream-strategy">Strategy</Label>
-          <Select id="upstream-strategy" value={strategy} onChange={onChange}>
-            {UPSTREAM_STRATEGIES.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
+          <Select
+            value={strategy}
+            onValueChange={(value) => {
+              const nextStrategy = toUpstreamStrategy(value);
+              if (nextStrategy) {
+                onChange(nextStrategy);
+              }
+            }}
+          >
+            <SelectTrigger id="upstream-strategy">
+              <SelectValue placeholder="Select strategy" />
+            </SelectTrigger>
+            <SelectContent>
+              {UPSTREAM_STRATEGIES.map((option) => (
+                <SelectItem key={option.value} value={option.value}>
+                  {option.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
           </Select>
         </div>
         <p className="text-xs text-muted-foreground">
@@ -312,10 +328,7 @@ type ConfigFileCardProps = {
   configPath: string;
   savedAt: string;
   status: "idle" | "loading" | "saving" | "saved" | "error";
-  statusMessage: string;
-  canSave: boolean;
   isDirty: boolean;
-  onSave: () => void;
   onReset: () => void;
   onReload: () => void;
 };
@@ -324,10 +337,7 @@ export function ConfigFileCard({
   configPath,
   savedAt,
   status,
-  statusMessage,
-  canSave,
   isDirty,
-  onSave,
   onReset,
   onReload,
 }: ConfigFileCardProps) {
@@ -335,7 +345,7 @@ export function ConfigFileCard({
     <Card data-slot="config-file-card">
       <CardHeader>
         <CardTitle>Config File</CardTitle>
-        <CardDescription>JSONC source of truth for the proxy.</CardDescription>
+        <CardDescription>Disk location and maintenance actions.</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="space-y-1">
@@ -344,7 +354,7 @@ export function ConfigFileCard({
         </div>
         <Separator />
         <div className="space-y-1 text-sm text-muted-foreground">
-          <p>Click save to write the JSONC config to disk.</p>
+          <p>Use the toolbar to save changes back to the JSONC file.</p>
           <p>Restart the proxy after saving to apply updates.</p>
         </div>
         {savedAt ? (
@@ -352,20 +362,40 @@ export function ConfigFileCard({
             Last saved at <span className="text-foreground">{savedAt}</span>
           </div>
         ) : null}
-        {statusMessage ? (
-          <div className="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-xs text-destructive">
-            {statusMessage}
+        {isDirty ? (
+          <div className="rounded-md border border-border/60 bg-background/60 p-3 text-xs text-muted-foreground">
+            You have unsaved changes. Reload is disabled to avoid overwriting your edits.
           </div>
         ) : null}
       </CardContent>
       <CardFooter className="flex flex-wrap gap-2">
-        <Button type="button" onClick={onSave} disabled={!canSave}>
-          Save to File
-        </Button>
-        <Button type="button" variant="outline" onClick={onReset} disabled={!isDirty}>
-          Reset
-        </Button>
-        <Button type="button" variant="ghost" onClick={onReload} disabled={status === "loading"}>
+        <AlertDialog>
+          <AlertDialogTrigger asChild>
+            <Button type="button" variant="outline" disabled={!isDirty}>
+              Discard changes
+            </Button>
+          </AlertDialogTrigger>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Discard unsaved changes?</AlertDialogTitle>
+              <AlertDialogDescription>
+                This will restore the form to the last loaded config file values.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction type="button" onClick={onReset}>
+                Discard
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+        <Button
+          type="button"
+          variant="ghost"
+          onClick={onReload}
+          disabled={status === "loading" || isDirty}
+        >
           Reload
         </Button>
       </CardFooter>
