@@ -5,7 +5,6 @@ use std::{
 };
 use tauri::{path::BaseDirectory, AppHandle, Manager};
 
-const CONFIG_DIR: &str = "token_proxy";
 const CONFIG_FILE_NAME: &str = "config.jsonc";
 const DEFAULT_CONFIG_HEADER: &str =
     "// Token Proxy config (JSONC). Comments and trailing commas are supported.\n";
@@ -582,10 +581,10 @@ async fn ensure_parent_dir(path: &Path) -> Result<(), String> {
         .map_err(|err| format!("Failed to create config directory: {err}"))
 }
 
-/// Config directory: BaseDirectory::AppConfig/token_proxy
+/// Config directory: BaseDirectory::AppConfig
 pub(crate) fn config_dir_path(app: &AppHandle) -> Result<PathBuf, String> {
     app.path()
-        .resolve(CONFIG_DIR, BaseDirectory::AppConfig)
+        .app_config_dir()
         .map_err(|err| format!("Failed to resolve config dir: {err}"))
 }
 
