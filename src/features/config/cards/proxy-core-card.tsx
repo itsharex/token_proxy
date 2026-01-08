@@ -1,6 +1,4 @@
-import { ToggleLeft, ToggleRight } from "lucide-react";
-
-import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -78,26 +76,12 @@ export function ProxyCoreCard({
                 when the preferred provider is missing.
               </p>
             </div>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-sm"
-              onClick={() =>
-                onChange({ enableApiFormatConversion: !form.enableApiFormatConversion })
-              }
-              aria-label={
-                form.enableApiFormatConversion
-                  ? "Disable OpenAI format conversion"
-                  : "Enable OpenAI format conversion"
-              }
-              aria-pressed={form.enableApiFormatConversion}
-            >
-              {form.enableApiFormatConversion ? (
-                <ToggleRight className="size-5" aria-hidden="true" />
-              ) : (
-                <ToggleLeft className="size-5" aria-hidden="true" />
-              )}
-            </Button>
+            <Switch
+              id="enable-format-conversion"
+              checked={form.enableApiFormatConversion}
+              onCheckedChange={(checked) => onChange({ enableApiFormatConversion: checked })}
+              aria-label="Enable OpenAI format conversion"
+            />
           </div>
           <p className="mt-2 text-xs text-muted-foreground">Default: disabled.</p>
         </div>
