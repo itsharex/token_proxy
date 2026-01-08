@@ -1,39 +1,40 @@
 import type { ColumnVisibility, UpstreamColumnDefinition } from "@/features/config/cards/upstreams/types";
+import { m } from "@/paraglide/messages.js";
 
 export const UPSTREAM_COLUMNS: readonly UpstreamColumnDefinition[] = [
   {
     id: "id",
-    label: "Id",
+    label: () => m.upstreams_column_id(),
     defaultVisible: true,
     headerClassName: "w-[14rem]",
     cellClassName: "w-[14rem] max-w-[14rem]",
   },
   {
     id: "provider",
-    label: "Provider",
+    label: () => m.upstreams_column_provider(),
     defaultVisible: true,
     headerClassName: "w-[12rem]",
     cellClassName: "w-[12rem] max-w-[12rem]",
   },
-  { id: "baseUrl", label: "Base URL", defaultVisible: false, cellClassName: "min-w-[18rem]" },
-  { id: "apiKey", label: "API Key", defaultVisible: false, cellClassName: "min-w-[18rem]" },
+  { id: "baseUrl", label: () => m.upstreams_column_base_url(), defaultVisible: false, cellClassName: "min-w-[18rem]" },
+  { id: "apiKey", label: () => m.upstreams_column_api_key(), defaultVisible: false, cellClassName: "min-w-[18rem]" },
   {
     id: "priority",
-    label: "Priority",
+    label: () => m.upstreams_column_priority(),
     defaultVisible: true,
     headerClassName: "w-[8rem]",
     cellClassName: "w-[8rem]",
   },
   {
     id: "index",
-    label: "Index",
+    label: () => m.upstreams_column_index(),
     defaultVisible: false,
     headerClassName: "w-[8rem]",
     cellClassName: "w-[8rem]",
   },
   {
     id: "status",
-    label: "Status",
+    label: () => m.upstreams_column_status(),
     defaultVisible: true,
     headerClassName: "w-[8rem]",
     cellClassName: "w-[8rem]",
@@ -81,9 +82,9 @@ export function toMaskedApiKey(value: string) {
 }
 
 export function toStatusLabel(enabled: boolean) {
-  return enabled ? "Enabled" : "Disabled";
+  return enabled ? m.common_enabled() : m.common_disabled();
 }
 
 export function getUpstreamLabel(index: number) {
-  return `Upstream ${index + 1}`;
+  return m.upstreams_upstream_n({ number: String(index + 1) });
 }

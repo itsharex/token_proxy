@@ -4,6 +4,7 @@ import {
   type UpstreamForm,
   UPSTREAM_STRATEGIES,
 } from "@/features/config/types";
+import { m } from "@/paraglide/messages.js";
 
 const DEFAULT_UPSTREAMS: UpstreamForm[] = [
   {
@@ -111,45 +112,45 @@ export function toPayload(form: ConfigForm): ProxyConfigFile {
 
 export function validate(form: ConfigForm) {
   if (!form.host.trim()) {
-    return { valid: false, message: "Host is required." };
+    return { valid: false, message: m.error_host_required() };
   }
   const port = Number.parseInt(form.port, 10);
   if (!Number.isFinite(port) || port < 1 || port > 65535) {
-    return { valid: false, message: "Port must be between 1 and 65535." };
+    return { valid: false, message: m.error_port_range() };
   }
   if (!form.logPath.trim()) {
-    return { valid: false, message: "Log path is required." };
+    return { valid: false, message: m.error_log_path_required() };
   }
   if (!form.upstreams.length) {
-    return { valid: false, message: "At least one upstream is required." };
+    return { valid: false, message: m.error_upstream_at_least_one() };
   }
   const hasEnabledUpstream = form.upstreams.some((upstream) => upstream.enabled);
   if (!hasEnabledUpstream) {
-    return { valid: false, message: "At least one enabled upstream is required." };
+    return { valid: false, message: m.error_upstream_at_least_one_enabled() };
   }
 
   const ids = new Set<string>();
   for (const upstream of form.upstreams) {
     const id = upstream.id.trim();
     if (!id) {
-      return { valid: false, message: "Upstream id is required." };
+      return { valid: false, message: m.error_upstream_id_required() };
     }
     if (ids.has(id)) {
-      return { valid: false, message: `Upstream id must be unique: ${id}.` };
+      return { valid: false, message: m.error_upstream_id_unique({ id }) };
     }
     ids.add(id);
     const provider = upstream.provider.trim();
     if (!provider) {
-      return { valid: false, message: `Upstream ${id} provider is required.` };
+      return { valid: false, message: m.error_upstream_provider_required({ id }) };
     }
     if (!upstream.baseUrl.trim()) {
-      return { valid: false, message: `Upstream ${id} base URL is required.` };
+      return { valid: false, message: m.error_upstream_base_url_required({ id }) };
     }
     if (!isValidOptionalInt(upstream.priority)) {
-      return { valid: false, message: `Upstream ${id} priority must be an integer.` };
+      return { valid: false, message: m.error_upstream_priority_integer({ id }) };
     }
     if (!isValidOptionalInt(upstream.index)) {
-      return { valid: false, message: `Upstream ${id} index must be an integer.` };
+      return { valid: false, message: m.error_upstream_index_integer({ id }) };
     }
   }
 

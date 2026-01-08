@@ -23,6 +23,7 @@ import {
 import { getUpstreamLabel } from "@/features/config/cards/upstreams/constants";
 import type { UpstreamEditorState } from "@/features/config/cards/upstreams/types";
 import type { UpstreamForm } from "@/features/config/types";
+import { m } from "@/paraglide/messages.js";
 
 type EditorFieldProps = {
   label: string;
@@ -61,7 +62,7 @@ function UpstreamEditorFields({
 }: UpstreamEditorFieldsProps) {
   return (
     <div className="grid grid-cols-[auto_1fr] items-center gap-x-3 gap-y-4">
-      <EditorField label="Id" htmlFor="upstream-editor-id">
+      <EditorField label={m.field_id()} htmlFor="upstream-editor-id">
         <Input
           id="upstream-editor-id"
           value={draft.id}
@@ -71,7 +72,7 @@ function UpstreamEditorFields({
       </EditorField>
 
       {/* Provider 和 Status 并排：四列布局 */}
-      <Label>Provider</Label>
+      <Label>{m.field_provider()}</Label>
       <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3">
         <Select
           value={draft.provider.trim() ? draft.provider : undefined}
@@ -88,7 +89,7 @@ function UpstreamEditorFields({
             ))}
           </SelectContent>
         </Select>
-        <Label>Status</Label>
+        <Label>{m.field_status()}</Label>
         <Select
           value={draft.enabled ? "enabled" : "disabled"}
           onValueChange={(value) =>
@@ -99,13 +100,13 @@ function UpstreamEditorFields({
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="enabled">Enabled</SelectItem>
-            <SelectItem value="disabled">Disabled</SelectItem>
+            <SelectItem value="enabled">{m.common_enabled()}</SelectItem>
+            <SelectItem value="disabled">{m.common_disabled()}</SelectItem>
           </SelectContent>
         </Select>
       </div>
 
-      <EditorField label="Base URL" htmlFor="upstream-editor-baseUrl">
+      <EditorField label={m.field_base_url()} htmlFor="upstream-editor-baseUrl">
         <Input
           id="upstream-editor-baseUrl"
           value={draft.baseUrl}
@@ -114,19 +115,19 @@ function UpstreamEditorFields({
         />
       </EditorField>
 
-      <EditorField label="API Key" htmlFor="upstream-editor-apiKey">
+      <EditorField label={m.field_api_key()} htmlFor="upstream-editor-apiKey">
         <PasswordInput
           id="upstream-editor-apiKey"
           visible={showApiKeys}
           onVisibilityChange={onToggleApiKeys}
           value={draft.apiKey}
           onChange={(e) => onChangeDraft({ apiKey: e.target.value })}
-          placeholder="Optional"
+          placeholder={m.common_optional()}
         />
       </EditorField>
 
       {/* Priority 和 Index 并排：四列布局 */}
-      <Label htmlFor="upstream-editor-priority">Priority</Label>
+      <Label htmlFor="upstream-editor-priority">{m.field_priority()}</Label>
       <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3">
         <Input
           id="upstream-editor-priority"
@@ -135,12 +136,12 @@ function UpstreamEditorFields({
           placeholder="0"
           inputMode="numeric"
         />
-        <Label htmlFor="upstream-editor-index">Index</Label>
+        <Label htmlFor="upstream-editor-index">{m.field_index()}</Label>
         <Input
           id="upstream-editor-index"
           value={draft.index}
           onChange={(e) => onChangeDraft({ index: e.target.value })}
-          placeholder="Optional"
+          placeholder={m.common_optional()}
           inputMode="numeric"
         />
       </div>
@@ -169,13 +170,13 @@ export function UpstreamEditorDialog({
 }: UpstreamEditorDialogProps) {
   const title = editor.open
     ? editor.mode === "create"
-      ? "Add Upstream"
-      : "Edit Upstream"
-    : "Upstream";
+      ? m.upstreams_editor_title_add()
+      : m.upstreams_editor_title_edit()
+    : m.upstreams_editor_title_default();
   const description =
     editor.open && editor.mode === "edit"
-      ? `${getUpstreamLabel(editor.index)} settings.`
-      : "Create a new upstream entry.";
+      ? m.upstreams_editor_description_edit({ rowLabel: getUpstreamLabel(editor.index) })
+      : m.upstreams_editor_description_create();
 
   return (
     <AlertDialog open={editor.open} onOpenChange={onOpenChange}>
@@ -194,8 +195,8 @@ export function UpstreamEditorDialog({
           />
         ) : null}
         <AlertDialogFooter>
-          <AlertDialogCancel>Cancel</AlertDialogCancel>
-          <AlertDialogAction onClick={onSave}>Save</AlertDialogAction>
+          <AlertDialogCancel>{m.common_cancel()}</AlertDialogCancel>
+          <AlertDialogAction onClick={onSave}>{m.common_save()}</AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>

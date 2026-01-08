@@ -1,0 +1,54 @@
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+
+import { getLocale, isLocale, setLocale, type Locale } from "@/paraglide/runtime.js";
+
+type I18nContextValue = {
+  locale: Locale;
+  setLocale: (locale: Locale) => void;
+};
+
+const I18nContext = createContext<I18nContextValue | null>(null);
+
+function syncDocumentLang(locale: Locale) {
+  document.documentElement.lang = locale;
+}
+
+type I18nProviderProps = {
+  children: ReactNode;
+};
+
+/**
+ * Paraglide 的 locale 存在全局 runtime 中；React 侧只需要一个状态用于触发重渲染。
+ * - `setLocale(..., { reload: false })`：切换语言时不刷新页面
+ * - `strategy: ["localStorage", "preferredLanguage", "baseLocale"]`：首次按系统语言，手动切换后持久化
+ */
+export function I18nProvider({ children }: I18nProviderProps) {
+  const [locale, setLocaleState] = useState<Locale>(() => getLocale());
+
+  const setAppLocale = useCallback((next: Locale) => {
+    setLocale(next, { reload: false });
+    syncDocumentLang(next);
+    setLocaleState(next);
+  }, []);
+
+  useEffect(() => {
+    const current = getLocale();
+    if (isLocale(current) && current !== locale) {
+      setLocaleState(current);
+    }
+    syncDocumentLang(locale);
+  }, [locale]);
+
+  const value = useMemo(() => ({ locale, setLocale: setAppLocale }), [locale, setAppLocale]);
+
+  return <I18nContext.Provider value={value}>{children}</I18nContext.Provider>;
+}
+
+export function useI18n() {
+  const value = useContext(I18nContext);
+  if (!value) {
+    throw new Error("useI18n 必须在 I18nProvider 内使用");
+  }
+  return value;
+}
+

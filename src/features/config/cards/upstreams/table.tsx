@@ -9,6 +9,7 @@ import {
 } from "@/features/config/cards/upstreams/constants";
 import type { UpstreamColumnDefinition, UpstreamColumnId } from "@/features/config/cards/upstreams/types";
 import type { UpstreamForm } from "@/features/config/types";
+import { m } from "@/paraglide/messages.js";
 
 type UpstreamsToolbarProps = {
   apiKeyVisible: boolean;
@@ -29,15 +30,21 @@ export function UpstreamsToolbar({
     <div className="flex flex-wrap items-center justify-between gap-2">
       <div className="flex flex-wrap items-center gap-2">
         <Button type="button" variant="outline" onClick={onAddClick}>
-          Add Upstream
+          {m.upstreams_add()}
         </Button>
         <Button type="button" variant="outline" onClick={onColumnsClick}>
           <Columns3 className="size-4" aria-hidden="true" />
-          Columns
+          {m.common_columns()}
         </Button>
       </div>
       {apiKeyVisible ? (
-        <Button type="button" variant="ghost" size="icon-sm" onClick={onToggleApiKeys} aria-label={showApiKeys ? "Hide API Keys" : "Show API Keys"}>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          onClick={onToggleApiKeys}
+          aria-label={showApiKeys ? m.upstreams_hide_api_keys() : m.upstreams_show_api_keys()}
+        >
           {showApiKeys ? <EyeOff className="size-4" aria-hidden="true" /> : <Eye className="size-4" aria-hidden="true" />}
         </Button>
       ) : null}
@@ -63,11 +70,11 @@ function UpstreamsTableHeader({ columns }: UpstreamsTableHeaderProps) {
               .filter(Boolean)
               .join(" ")}
           >
-            {column.label}
+            {column.label()}
           </th>
         ))}
         <th className="w-[9rem] px-3 py-2 text-right text-xs font-medium text-muted-foreground">
-          Actions
+          {m.common_actions()}
         </th>
       </tr>
     </thead>
@@ -99,7 +106,7 @@ function renderUpstreamCell(columnId: UpstreamColumnId, upstream: UpstreamForm, 
       return value.trim() ? (
         <span className="truncate text-foreground">{value}</span>
       ) : (
-        <span className="truncate text-muted-foreground">Optional</span>
+        <span className="truncate text-muted-foreground">{m.common_optional()}</span>
       );
     }
     case "priority":
@@ -112,7 +119,7 @@ function renderUpstreamCell(columnId: UpstreamColumnId, upstream: UpstreamForm, 
       return upstream.index.trim() ? (
         <span className="text-foreground">{upstream.index}</span>
       ) : (
-        <span className="text-muted-foreground">Optional</span>
+        <span className="text-muted-foreground">{m.common_optional()}</span>
       );
     case "status":
       return (
@@ -143,7 +150,13 @@ function UpstreamRowActions({
   return (
     <td className="w-[9rem] px-3 py-2 align-top">
       <div className="flex justify-end gap-1">
-        <Button type="button" variant="ghost" size="icon-sm" onClick={onEdit} aria-label={`Edit ${rowLabel}`}>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          onClick={onEdit}
+          aria-label={m.upstreams_row_edit({ rowLabel })}
+        >
           <Pencil className="size-4" aria-hidden="true" />
         </Button>
         <Button
@@ -151,7 +164,7 @@ function UpstreamRowActions({
           variant="ghost"
           size="icon-sm"
           onClick={onToggleEnabled}
-          aria-label={`${enabled ? "Disable" : "Enable"} ${rowLabel}`}
+          aria-label={enabled ? m.upstreams_row_disable({ rowLabel }) : m.upstreams_row_enable({ rowLabel })}
         >
           {enabled ? (
             <ToggleRight className="size-4" aria-hidden="true" />
@@ -165,7 +178,7 @@ function UpstreamRowActions({
           size="icon-sm"
           onClick={onDelete}
           disabled={disableDelete}
-          aria-label={`Delete ${rowLabel}`}
+          aria-label={m.upstreams_row_delete({ rowLabel })}
         >
           <Trash2 className="size-4" aria-hidden="true" />
         </Button>
@@ -262,4 +275,3 @@ export function UpstreamsTable({
     </div>
   );
 }
-

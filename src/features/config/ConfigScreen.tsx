@@ -12,6 +12,7 @@ import type {
   ProxyServiceStatus,
 } from "@/features/config/types";
 import { parseError } from "@/lib/error";
+import { m } from "@/paraglide/messages.js";
 
 type StatusState = "idle" | "loading" | "saving" | "saved" | "error";
 type ProxyServiceRequestState = "idle" | "working" | "error";
@@ -22,18 +23,18 @@ function createStatusBadge(
   lastConfig: ProxyConfigFile | null
 ): StatusBadge {
   if (status === "loading" || status === "saving") {
-    return { label: "Working", variant: "secondary" };
+    return { id: "working", label: m.config_status_working(), variant: "secondary" };
   }
   if (status === "error") {
-    return { label: "Error", variant: "destructive" };
+    return { id: "error", label: m.config_status_error(), variant: "destructive" };
   }
   if (isDirty) {
-    return { label: "Unsaved", variant: "secondary" };
+    return { id: "unsaved", label: m.config_status_unsaved(), variant: "secondary" };
   }
   if (lastConfig) {
-    return { label: "Saved", variant: "default" };
+    return { id: "saved", label: m.config_status_saved(), variant: "default" };
   }
-  return { label: "Idle", variant: "outline" };
+  return { id: "idle", label: m.config_status_idle(), variant: "outline" };
 }
 
 function useConfigState() {
@@ -149,10 +150,7 @@ function useConfigDerived(form: ConfigForm, lastConfig: ProxyConfigFile | null, 
     return JSON.stringify(currentPayload) !== JSON.stringify(lastConfig);
   }, [currentPayload, lastConfig]);
 
-  const statusBadge = useMemo(
-    () => createStatusBadge(status, isDirty, lastConfig),
-    [isDirty, lastConfig, status]
-  );
+  const statusBadge = createStatusBadge(status, isDirty, lastConfig);
 
   const providerOptions = useMemo(() => {
     const providers = new Set<string>();
@@ -215,7 +213,7 @@ function useConfigActions({
   const saveConfig = useCallback(async () => {
     if (!currentPayload) {
       setStatus("error");
-      setStatusMessage(validation.message || "Invalid configuration.");
+      setStatusMessage(validation.message || m.config_invalid_configuration());
       return;
     }
     setStatus("saving");

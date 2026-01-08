@@ -1,6 +1,7 @@
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import type { ConfigForm } from "@/features/config/types";
+import { m } from "@/paraglide/messages.js";
 
 type ValidationCardProps = {
   form: ConfigForm;
@@ -13,28 +14,32 @@ export function ValidationCard({ form, validation }: ValidationCardProps) {
   return (
     <Card data-slot="validation-card">
       <CardHeader>
-        <CardTitle>Validation</CardTitle>
-        <CardDescription>Keep fields consistent before saving.</CardDescription>
+        <CardTitle>{m.validation_title()}</CardTitle>
+        <CardDescription>{m.validation_desc()}</CardDescription>
       </CardHeader>
       <CardContent className="space-y-3 text-sm">
         <div className="flex items-center justify-between">
-          <span>Host</span>
+          <span>{m.validation_host_row()}</span>
           <Badge variant={form.host.trim() ? "default" : "destructive"}>
-            {form.host.trim() ? "Ready" : "Missing"}
+            {form.host.trim() ? m.validation_ready() : m.validation_missing()}
           </Badge>
         </div>
         <div className="flex items-center justify-between">
-          <span>Port</span>
+          <span>{m.validation_port_row()}</span>
           <Badge variant={validation.valid ? "default" : "secondary"}>
-            {validation.valid ? "OK" : "Check"}
+            {validation.valid ? m.validation_ok() : m.validation_check()}
           </Badge>
         </div>
         <div className="flex items-center justify-between">
-          <span>Upstreams</span>
+          <span>{m.validation_upstreams_row()}</span>
           <Badge
             variant={!hasUpstreams ? "destructive" : hasEnabledUpstreams ? "default" : "secondary"}
           >
-            {!hasUpstreams ? "Missing" : hasEnabledUpstreams ? "Ready" : "Disabled"}
+            {!hasUpstreams
+              ? m.validation_missing()
+              : hasEnabledUpstreams
+                ? m.validation_ready()
+                : m.validation_disabled()}
           </Badge>
         </div>
       </CardContent>

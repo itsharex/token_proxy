@@ -6,6 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Separator } from "@/components/ui/separator";
 import type { ProxyServiceStatus } from "@/features/config/types";
 import { cn } from "@/lib/utils";
+import { m } from "@/paraglide/messages.js";
 
 type ProxyServiceRequestState = "idle" | "working" | "error";
 
@@ -24,15 +25,15 @@ type ProxyServiceCardProps = {
 function resolveBadge(status: ProxyServiceStatus | null, message: string) {
   const hasError = Boolean(message || status?.last_error);
   if (hasError) {
-    return { label: "Error", variant: "destructive" as const };
+    return { label: m.proxy_service_badge_error(), variant: "destructive" as const };
   }
   if (!status) {
-    return { label: "Unknown", variant: "outline" as const };
+    return { label: m.proxy_service_badge_unknown(), variant: "outline" as const };
   }
   if (status.state === "running") {
-    return { label: "Running", variant: "default" as const };
+    return { label: m.proxy_service_badge_running(), variant: "default" as const };
   }
-  return { label: "Stopped", variant: "secondary" as const };
+  return { label: m.proxy_service_badge_stopped(), variant: "secondary" as const };
 }
 
 export function ProxyServiceCard({
@@ -55,27 +56,24 @@ export function ProxyServiceCard({
   return (
     <Card data-slot="proxy-service-card">
       <CardHeader>
-        <CardTitle>Proxy Service</CardTitle>
-        <CardDescription>Safe stop/restart and manual config reload.</CardDescription>
+        <CardTitle>{m.proxy_service_title()}</CardTitle>
+        <CardDescription>{m.proxy_service_desc()}</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3 text-sm">
           <div className="flex items-center gap-2">
-            <span className="text-muted-foreground">State</span>
+            <span className="text-muted-foreground">{m.proxy_service_state_label()}</span>
             <Badge variant={badge.variant}>{badge.label}</Badge>
           </div>
           <div className="flex items-center gap-2">
-            <span className="text-muted-foreground">Addr</span>
+            <span className="text-muted-foreground">{m.proxy_service_addr_label()}</span>
             <span className="font-mono text-xs text-foreground/80">{addr}</span>
           </div>
         </div>
         <Separator />
         <div className="grid gap-2 text-xs text-muted-foreground">
-          <p>
-            The proxy reads configuration from the JSONC file on disk. Save your changes first to
-            apply them.
-          </p>
-          <p>Saving the config triggers an automatic reload (and safe restart if host/port changes).</p>
+          <p>{m.proxy_service_help_1()}</p>
+          <p>{m.proxy_service_help_2()}</p>
         </div>
         {errorMessage ? (
           <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-xs text-destructive">
@@ -88,27 +86,26 @@ export function ProxyServiceCard({
           </Button>
           <Button type="button" onClick={onStart} disabled={isWorking || isRunning}>
             {isWorking ? <Loader2 className="animate-spin" aria-hidden="true" /> : <Play aria-hidden="true" />}
-            Start
+            {m.proxy_service_start()}
           </Button>
           <Button type="button" variant="outline" onClick={onStop} disabled={isWorking || !isRunning}>
             <Square aria-hidden="true" />
-            Stop
+            {m.proxy_service_stop()}
           </Button>
           <Button type="button" variant="outline" onClick={onRestart} disabled={isWorking || !isRunning || isDirty}>
             <RotateCcw aria-hidden="true" />
-            Restart
+            {m.proxy_service_restart()}
           </Button>
           <Button type="button" variant="outline" onClick={onReload} disabled={isWorking || isDirty}>
-            Reload config
+            {m.proxy_service_reload_config()}
           </Button>
         </div>
         {isDirty ? (
           <div className="rounded-md border border-border/60 bg-background/60 p-3 text-xs text-muted-foreground">
-            You have unsaved changes. Restart/Reload is disabled to avoid applying stale disk config.
+            {m.proxy_service_unsaved_notice()}
           </div>
         ) : null}
       </CardContent>
     </Card>
   );
 }
-

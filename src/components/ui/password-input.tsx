@@ -2,6 +2,7 @@ import * as React from "react";
 import { Eye, EyeOff } from "lucide-react";
 
 import { cn } from "@/lib/utils";
+import { m } from "@/paraglide/messages.js";
 
 type PasswordInputProps = Omit<React.ComponentProps<"input">, "type"> & {
   visible?: boolean;
@@ -36,7 +37,7 @@ function PasswordInput({
         type="button"
         className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground transition-colors hover:text-foreground focus-visible:text-foreground focus-visible:outline-none"
         onClick={onVisibilityChange}
-        aria-label={visible ? "Hide" : "Show"}
+        aria-label={visible ? m.common_hide() : m.common_show()}
         tabIndex={-1}
       >
         <Icon className="size-4" aria-hidden="true" />

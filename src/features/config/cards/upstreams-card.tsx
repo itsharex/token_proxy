@@ -17,6 +17,7 @@ import type {
 } from "@/features/config/cards/upstreams/types";
 import { createEmptyUpstream } from "@/features/config/form";
 import type { UpstreamForm } from "@/features/config/types";
+import { m } from "@/paraglide/messages.js";
 
 type UpstreamsCardProps = {
   upstreams: UpstreamForm[];
@@ -46,17 +47,17 @@ export function UpstreamsCard({ upstreams, showApiKeys, providerOptions, onToggl
   return (
     <Card data-slot="upstreams-card">
       <CardHeader>
-        <CardTitle>Upstreams</CardTitle>
-        <CardDescription>Define provider pools and credentials. Use provider names <code>openai</code>, <code>openai-response</code>, <code>anthropic</code> and/or <code>gemini</code>.</CardDescription>
+        <CardTitle>{m.upstreams_title()}</CardTitle>
+        <CardDescription>{m.upstreams_desc()}</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         <UpstreamsToolbar apiKeyVisible={apiKeyVisible} showApiKeys={showApiKeys} onToggleApiKeys={onToggleApiKeys} onAddClick={() => setEditor({ open: true, mode: "create", draft: createEmptyUpstream() })} onColumnsClick={() => setColumnsOpen(true)} />
         {upstreams.length ? (
           <UpstreamsTable upstreams={upstreams} columns={columns} showApiKeys={showApiKeys} disableDelete={disableDelete} onEdit={(index) => upstreams[index] && setEditor({ open: true, mode: "edit", index, draft: { ...upstreams[index] } })} onToggleEnabled={(index) => upstreams[index] && onChange(index, { enabled: !upstreams[index].enabled })} onDelete={(index) => setDeleteDialog({ open: true, index })} />
         ) : (
-          <p className="text-sm text-muted-foreground">No upstreams defined yet.</p>
+          <p className="text-sm text-muted-foreground">{m.upstreams_empty()}</p>
         )}
-        <p className="text-xs text-muted-foreground">Tip: Priority sorts upstreams in descending order. Index orders entries inside the same priority group; empty index values are auto-assigned globally.</p>
+        <p className="text-xs text-muted-foreground">{m.upstreams_tip()}</p>
       </CardContent>
 
       <ColumnsDialog open={columnsOpen} visibility={columnVisibility} onOpenChange={setColumnsOpen} onToggleColumn={(columnId) => setColumnVisibility((prev) => ({ ...prev, [columnId]: !prev[columnId] }))} />

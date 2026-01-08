@@ -5,7 +5,10 @@ import {
   AlertCircle,
   CircleCheck,
   FileJson,
+  LayoutDashboard,
   Loader2,
+  PanelLeftClose,
+  PanelLeftOpen,
   RefreshCw,
   Server,
   Settings2,
@@ -17,6 +20,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import {
   ConfigFileCard,
   ProxyCoreCard,
@@ -26,47 +30,55 @@ import {
   ValidationCard,
   type StatusBadge,
 } from "@/features/config/cards";
+import { DashboardScreen } from "@/features/dashboard/DashboardScreen";
 import type { ConfigForm, ProxyServiceStatus } from "@/features/config/types";
 import { cn } from "@/lib/utils";
+import { m } from "@/paraglide/messages.js";
 
-type ConfigSectionId = "core" | "strategy" | "upstreams" | "file" | "validation";
+type ConfigSectionId = "dashboard" | "core" | "strategy" | "upstreams" | "file" | "validation";
 
 type ConfigSection = {
   id: ConfigSectionId;
-  label: string;
-  description: string;
+  label: () => string;
+  description: () => string;
   icon: LucideIcon;
 };
 
 const CONFIG_SECTIONS: readonly ConfigSection[] = [
   {
+    id: "dashboard",
+    label: () => m.config_section_dashboard_label(),
+    description: () => m.config_section_dashboard_desc(),
+    icon: LayoutDashboard,
+  },
+  {
     id: "core",
-    label: "Proxy Core",
-    description: "Listening address, auth, and logs",
+    label: () => m.config_section_core_label(),
+    description: () => m.config_section_core_desc(),
     icon: SlidersHorizontal,
   },
   {
     id: "strategy",
-    label: "Strategy",
-    description: "Global upstream selection rules",
+    label: () => m.config_section_strategy_label(),
+    description: () => m.config_section_strategy_desc(),
     icon: Shuffle,
   },
   {
     id: "upstreams",
-    label: "Upstreams",
-    description: "Provider pools and API keys",
+    label: () => m.config_section_upstreams_label(),
+    description: () => m.config_section_upstreams_desc(),
     icon: Server,
   },
   {
     id: "file",
-    label: "Config File",
-    description: "JSONC on disk and reset tools",
+    label: () => m.config_section_file_label(),
+    description: () => m.config_section_file_desc(),
     icon: FileJson,
   },
   {
     id: "validation",
-    label: "Validation",
-    description: "Quick readiness checks",
+    label: () => m.config_section_validation_label(),
+    description: () => m.config_section_validation_desc(),
     icon: CircleCheck,
   },
 ] as const;
@@ -84,6 +96,7 @@ function toConfigSectionId(value: string): ConfigSectionId | null {
 type ConfigSidebarProps = {
   statusBadge: StatusBadge;
   activeSection: ConfigSectionId;
+  sidebarOpen: boolean;
 };
 
 type ConfigStatusIndicatorProps = {
@@ -100,7 +113,7 @@ function ConfigStatusIndicator({ statusBadge }: ConfigStatusIndicatorProps) {
         : statusBadge.variant === "destructive"
           ? "bg-destructive"
           : "bg-border",
-    statusBadge.label === "Working" && "animate-pulse"
+    statusBadge.id === "working" && "animate-pulse"
   );
 
   const textClassName = cn(
@@ -116,55 +129,61 @@ function ConfigStatusIndicator({ statusBadge }: ConfigStatusIndicatorProps) {
   );
 }
 
-function ConfigSidebar({ statusBadge, activeSection }: ConfigSidebarProps) {
+function ConfigSidebar({ statusBadge, activeSection, sidebarOpen }: ConfigSidebarProps) {
   return (
     <aside
       data-slot="config-sidebar"
-      className="flex min-h-0 flex-col border-r border-border/60 bg-background/60 backdrop-blur"
+      aria-hidden={!sidebarOpen}
+      className={cn(
+        "flex min-h-0 flex-col overflow-hidden bg-background/60 backdrop-blur transition-[width] duration-200",
+        sidebarOpen ? "border-r border-border/60" : "w-0 border-r-0"
+      )}
     >
-      <div className="flex items-center gap-3 px-4 py-3">
-        <div className="grid size-8 place-items-center rounded-lg border border-border/60 bg-background shadow-sm">
-          <Settings2 className="size-4 text-foreground" aria-hidden="true" />
-        </div>
-        <div className="min-w-0 flex-1">
-          <p className="title-font truncate text-sm font-semibold text-foreground">Token Proxy</p>
-          <div className="mt-1 min-w-0">
-            <ConfigStatusIndicator statusBadge={statusBadge} />
+      <div className={cn("flex min-h-0 flex-1 flex-col", !sidebarOpen && "hidden")}>
+        <div className="flex items-center gap-3 px-4 py-3">
+          <div className="grid size-8 place-items-center rounded-lg border border-border/60 bg-background shadow-sm">
+            <Settings2 className="size-4 text-foreground" aria-hidden="true" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <p className="title-font truncate text-sm font-semibold text-foreground">Token Proxy</p>
+            <div className="mt-1 min-w-0">
+              <ConfigStatusIndicator statusBadge={statusBadge} />
+            </div>
           </div>
         </div>
-      </div>
-      <ScrollArea data-slot="config-sidebar-scroll" className="min-h-0 flex-1 px-2 pb-4">
-        <TabsList
-          data-slot="config-sidebar-tabs"
-          className="h-auto w-full flex-col items-stretch justify-start gap-1 bg-transparent p-0"
-        >
-          {CONFIG_SECTIONS.map((section) => {
-            const Icon = section.icon;
-            const isActive = section.id === activeSection;
-            return (
-              <TabsTrigger
-                key={section.id}
-                value={section.id}
-                aria-current={isActive ? "page" : undefined}
-                className={cn(
-                  "group flex h-auto w-full items-center justify-start gap-2.5 rounded-md px-2.5 py-2 text-left transition-colors",
-                  "hover:bg-accent/60",
-                  "data-[state=active]:bg-accent data-[state=active]:text-accent-foreground data-[state=active]:shadow-none"
-                )}
-              >
-                <Icon
+        <ScrollArea data-slot="config-sidebar-scroll" className="min-h-0 flex-1 px-2 pb-4">
+          <TabsList
+            data-slot="config-sidebar-tabs"
+            className="h-auto w-full flex-col items-stretch justify-start gap-1 bg-transparent p-0"
+          >
+            {CONFIG_SECTIONS.map((section) => {
+              const Icon = section.icon;
+              const isActive = section.id === activeSection;
+              return (
+                <TabsTrigger
+                  key={section.id}
+                  value={section.id}
+                  aria-current={isActive ? "page" : undefined}
                   className={cn(
-                    "size-4 shrink-0 text-muted-foreground transition-colors",
-                    isActive ? "text-foreground" : "group-hover:text-foreground"
+                    "group flex h-auto w-full items-center justify-start gap-2.5 rounded-md px-2.5 py-2 text-left transition-colors",
+                    "hover:bg-accent/60",
+                    "data-[state=active]:bg-accent data-[state=active]:text-accent-foreground data-[state=active]:shadow-none"
                   )}
-                  aria-hidden="true"
-                />
-                <span className="min-w-0 truncate text-sm font-medium">{section.label}</span>
-              </TabsTrigger>
-            );
-          })}
-        </TabsList>
-      </ScrollArea>
+                >
+                  <Icon
+                    className={cn(
+                      "size-4 shrink-0 text-muted-foreground transition-colors",
+                      isActive ? "text-foreground" : "group-hover:text-foreground"
+                    )}
+                    aria-hidden="true"
+                  />
+                  <span className="min-w-0 truncate text-sm font-medium">{section.label()}</span>
+                </TabsTrigger>
+              );
+            })}
+          </TabsList>
+        </ScrollArea>
+      </div>
     </aside>
   );
 }
@@ -207,11 +226,39 @@ type ConfigToolbarProps = {
   status: AppViewProps["status"];
   canSave: boolean;
   isDirty: boolean;
+  sidebarOpen: boolean;
+  onToggleSidebar: () => void;
   onReload: () => void;
   onSave: () => void;
 };
 
-function ConfigToolbar({ section, status, canSave, isDirty, onReload, onSave }: ConfigToolbarProps) {
+type SidebarToggleButtonProps = {
+  open: boolean;
+  onToggle: () => void;
+};
+
+function SidebarToggleButton({ open, onToggle }: SidebarToggleButtonProps) {
+  const Icon = open ? PanelLeftClose : PanelLeftOpen;
+  const label = open ? m.sidebar_hide() : m.sidebar_show();
+
+  return (
+    <Button type="button" variant="outline" size="icon" onClick={onToggle}>
+      <Icon className="size-4" aria-hidden="true" />
+      <span className="sr-only">{label}</span>
+    </Button>
+  );
+}
+
+function ConfigToolbar({
+  section,
+  status,
+  canSave,
+  isDirty,
+  sidebarOpen,
+  onToggleSidebar,
+  onReload,
+  onSave,
+}: ConfigToolbarProps) {
   const isLoading = status === "loading";
   const isSaving = status === "saving";
   const canReload = !isLoading && !isDirty;
@@ -221,16 +268,20 @@ function ConfigToolbar({ section, status, canSave, isDirty, onReload, onSave }: 
       data-slot="config-toolbar"
       className="flex items-center justify-between gap-3 border-b border-border/60 bg-background/70 px-6 py-4 backdrop-blur"
     >
-      <div className="min-w-0">
-        <p className="truncate text-sm font-medium text-foreground">{section.label}</p>
-        <p className="truncate text-xs text-muted-foreground">{section.description}</p>
+      <div className="flex min-w-0 items-center gap-3">
+        <SidebarToggleButton open={sidebarOpen} onToggle={onToggleSidebar} />
+        <div className="min-w-0">
+          <p className="truncate text-sm font-medium text-foreground">{section.label()}</p>
+          <p className="truncate text-xs text-muted-foreground">{section.description()}</p>
+        </div>
       </div>
       <div className="flex items-center gap-2">
+        <LanguageSwitcher triggerClassName="h-10 w-[140px]" />
         <Button type="button" variant="outline" size="icon" onClick={onReload} disabled={!canReload}>
           <RefreshCw className={isLoading ? "animate-spin" : undefined} aria-hidden="true" />
         </Button>
         <Button type="button" onClick={onSave} disabled={!canSave}>
-          {isSaving ? <Loader2 className="animate-spin" aria-hidden="true" /> : "Save"}
+          {isSaving ? <Loader2 className="animate-spin" aria-hidden="true" /> : m.common_save()}
         </Button>
       </div>
     </header>
@@ -249,7 +300,7 @@ function StatusAlert({ statusMessage }: StatusAlertProps) {
     <Alert variant="destructive" className="mb-6">
       <AlertCircle className="size-4" aria-hidden="true" />
       <div>
-        <AlertTitle>Request failed</AlertTitle>
+        <AlertTitle>{m.config_request_failed_title()}</AlertTitle>
         <AlertDescription>{statusMessage}</AlertDescription>
       </div>
     </Alert>
@@ -258,7 +309,10 @@ function StatusAlert({ statusMessage }: StatusAlertProps) {
 
 export function AppView(props: AppViewProps) {
   const [activeSection, setActiveSection] = useState<ConfigSectionId>("core");
+  const [sidebarOpen, setSidebarOpen] = useState(true);
   const sectionMeta = useMemo(() => findSection(activeSection), [activeSection]);
+  const isDashboard = activeSection === "dashboard";
+  const toggleSidebar = () => setSidebarOpen((value) => !value);
 
   return (
     <Tabs
@@ -273,69 +327,89 @@ export function AppView(props: AppViewProps) {
       orientation="vertical"
       className="relative z-10 grid h-full min-h-0 grid-cols-[max-content_1fr]"
     >
-      <ConfigSidebar statusBadge={props.statusBadge} activeSection={activeSection} />
+      <ConfigSidebar
+        statusBadge={props.statusBadge}
+        activeSection={activeSection}
+        sidebarOpen={sidebarOpen}
+      />
       <section
         data-slot="config-main"
         className="flex min-h-0 flex-col bg-background/30 backdrop-blur-sm"
       >
-        <ConfigToolbar
-          section={sectionMeta}
-          status={props.status}
-          canSave={props.canSave}
-          isDirty={props.isDirty}
-          onReload={props.onReload}
-          onSave={props.onSave}
-        />
+        {isDashboard ? null : (
+          <ConfigToolbar
+            section={sectionMeta}
+            status={props.status}
+            canSave={props.canSave}
+            isDirty={props.isDirty}
+            sidebarOpen={sidebarOpen}
+            onToggleSidebar={toggleSidebar}
+            onReload={props.onReload}
+            onSave={props.onSave}
+          />
+        )}
         <ScrollArea data-slot="config-main-scroll" className="min-h-0 flex-1">
-          <div className="p-6">
-            <StatusAlert statusMessage={props.statusMessage} />
-            <TabsContent value="core" className="mt-0">
-              <ProxyCoreCard
-                form={props.form}
-                showLocalKey={props.showLocalKey}
-                onToggleLocalKey={props.onToggleLocalKey}
-                onChange={props.onFormChange}
+          {isDashboard ? (
+            <TabsContent value="dashboard" className="mt-0">
+              <DashboardScreen
+                variant="embedded"
+                headerLeading={<SidebarToggleButton open={sidebarOpen} onToggle={toggleSidebar} />}
               />
             </TabsContent>
-            <TabsContent value="strategy" className="mt-0">
-              <StrategyCard strategy={props.form.upstreamStrategy} onChange={props.onStrategyChange} />
-            </TabsContent>
-            <TabsContent value="upstreams" className="mt-0">
-              <UpstreamsCard
-                upstreams={props.form.upstreams}
-                showApiKeys={props.showUpstreamKeys}
-                providerOptions={props.providerOptions}
-                onToggleApiKeys={props.onToggleUpstreamKeys}
-                onAdd={props.onAddUpstream}
-                onRemove={props.onRemoveUpstream}
-                onChange={props.onChangeUpstream}
-              />
-            </TabsContent>
-            <TabsContent value="file" className="mt-0">
-              <div className="space-y-6">
-                <ConfigFileCard
-                  configPath={props.configPath}
-                  savedAt={props.savedAt}
-                  isDirty={props.isDirty}
-                  onReset={props.onReset}
+          ) : (
+            <div className="p-6">
+              <StatusAlert statusMessage={props.statusMessage} />
+              <TabsContent value="core" className="mt-0">
+                <ProxyCoreCard
+                  form={props.form}
+                  showLocalKey={props.showLocalKey}
+                  onToggleLocalKey={props.onToggleLocalKey}
+                  onChange={props.onFormChange}
                 />
-                <ProxyServiceCard
-                  status={props.proxyServiceStatus}
-                  requestState={props.proxyServiceRequestState}
-                  message={props.proxyServiceMessage}
-                  isDirty={props.isDirty}
-                  onRefresh={props.onProxyServiceRefresh}
-                  onStart={props.onProxyServiceStart}
-                  onStop={props.onProxyServiceStop}
-                  onRestart={props.onProxyServiceRestart}
-                  onReload={props.onProxyServiceReload}
+              </TabsContent>
+              <TabsContent value="strategy" className="mt-0">
+                <StrategyCard
+                  strategy={props.form.upstreamStrategy}
+                  onChange={props.onStrategyChange}
                 />
-              </div>
-            </TabsContent>
-            <TabsContent value="validation" className="mt-0">
-              <ValidationCard form={props.form} validation={props.validation} />
-            </TabsContent>
-          </div>
+              </TabsContent>
+              <TabsContent value="upstreams" className="mt-0">
+                <UpstreamsCard
+                  upstreams={props.form.upstreams}
+                  showApiKeys={props.showUpstreamKeys}
+                  providerOptions={props.providerOptions}
+                  onToggleApiKeys={props.onToggleUpstreamKeys}
+                  onAdd={props.onAddUpstream}
+                  onRemove={props.onRemoveUpstream}
+                  onChange={props.onChangeUpstream}
+                />
+              </TabsContent>
+              <TabsContent value="file" className="mt-0">
+                <div className="space-y-6">
+                  <ConfigFileCard
+                    configPath={props.configPath}
+                    savedAt={props.savedAt}
+                    isDirty={props.isDirty}
+                    onReset={props.onReset}
+                  />
+                  <ProxyServiceCard
+                    status={props.proxyServiceStatus}
+                    requestState={props.proxyServiceRequestState}
+                    message={props.proxyServiceMessage}
+                    isDirty={props.isDirty}
+                    onRefresh={props.onProxyServiceRefresh}
+                    onStart={props.onProxyServiceStart}
+                    onStop={props.onProxyServiceStop}
+                    onRestart={props.onProxyServiceRestart}
+                    onReload={props.onProxyServiceReload}
+                  />
+                </div>
+              </TabsContent>
+              <TabsContent value="validation" className="mt-0">
+                <ValidationCard form={props.form} validation={props.validation} />
+              </TabsContent>
+            </div>
+          )}
         </ScrollArea>
       </section>
     </Tabs>

@@ -10,6 +10,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { type ConfigForm, UPSTREAM_STRATEGIES } from "@/features/config/types";
+import { m } from "@/paraglide/messages.js";
 
 const UPSTREAM_STRATEGY_VALUES: ReadonlySet<string> = new Set(
   UPSTREAM_STRATEGIES.map((strategy) => strategy.value)
@@ -29,12 +30,12 @@ export function StrategyCard({ strategy, onChange }: StrategyCardProps) {
   return (
     <Card data-slot="strategy-card">
       <CardHeader>
-        <CardTitle>Upstream Strategy</CardTitle>
-        <CardDescription>Choose how upstreams are selected globally.</CardDescription>
+        <CardTitle>{m.strategy_title()}</CardTitle>
+        <CardDescription>{m.strategy_desc()}</CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
         <div className="grid gap-2">
-          <Label htmlFor="upstream-strategy">Strategy</Label>
+          <Label htmlFor="upstream-strategy">{m.strategy_label()}</Label>
           <Select
             value={strategy}
             onValueChange={(value) => {
@@ -45,20 +46,19 @@ export function StrategyCard({ strategy, onChange }: StrategyCardProps) {
             }}
           >
             <SelectTrigger id="upstream-strategy">
-              <SelectValue placeholder="Select strategy" />
+              <SelectValue placeholder={m.strategy_placeholder()} />
             </SelectTrigger>
             <SelectContent>
               {options.map((option) => (
                 <SelectItem key={option.value} value={option.value}>
-                  {option.label}
+                  {option.label()}
                 </SelectItem>
               ))}
             </SelectContent>
           </Select>
         </div>
         <p className="text-xs text-muted-foreground">
-          Priority round robin rotates within the highest priority group. Priority fill first uses
-          the top entry until it fails.
+          {m.strategy_help()}
         </p>
       </CardContent>
     </Card>

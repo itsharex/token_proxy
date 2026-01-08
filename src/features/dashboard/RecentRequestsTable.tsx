@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useRef } from "react";
 
 import { useVirtualizer, type VirtualItem } from "@tanstack/react-virtual";
 import {
@@ -14,6 +14,7 @@ import { Badge } from "@/components/ui/badge";
 import type { DashboardRequestItem } from "@/features/dashboard/types";
 import { formatInteger } from "@/features/dashboard/format";
 import { cn } from "@/lib/utils";
+import { m } from "@/paraglide/messages.js";
 
 const TABLE_HEIGHT_PX = 360;
 const ROW_HEIGHT_PX = 44;
@@ -39,7 +40,7 @@ function statusToVariant(status: number): BadgeVariant {
 function timeColumn(): ColumnDef<DashboardRequestItem> {
   return {
     id: "time",
-    header: "时间",
+    header: m.dashboard_table_time(),
     cell: ({ row }) => (
       <span className="whitespace-nowrap text-xs text-muted-foreground">
         {new Date(row.original.tsMs).toLocaleString()}
@@ -51,7 +52,7 @@ function timeColumn(): ColumnDef<DashboardRequestItem> {
 function pathColumn(): ColumnDef<DashboardRequestItem> {
   return {
     id: "path",
-    header: "路径",
+    header: m.dashboard_table_path(),
     cell: ({ row }) => <span className="block truncate font-medium text-foreground">{row.original.path}</span>,
   };
 }
@@ -59,7 +60,7 @@ function pathColumn(): ColumnDef<DashboardRequestItem> {
 function providerColumn(): ColumnDef<DashboardRequestItem> {
   return {
     id: "provider",
-    header: "Provider",
+    header: m.dashboard_table_provider(),
     cell: ({ row }) => (
       <span className="block truncate text-xs text-muted-foreground">
         {row.original.provider}
@@ -72,7 +73,7 @@ function providerColumn(): ColumnDef<DashboardRequestItem> {
 function statusColumn(): ColumnDef<DashboardRequestItem> {
   return {
     id: "status",
-    header: "状态",
+    header: m.dashboard_table_status(),
     cell: ({ row }) => <Badge variant={statusToVariant(row.original.status)}>{row.original.status}</Badge>,
   };
 }
@@ -80,13 +81,13 @@ function statusColumn(): ColumnDef<DashboardRequestItem> {
 function tokensColumn(): ColumnDef<DashboardRequestItem> {
   return {
     id: "tokens",
-    header: "Tokens",
+    header: m.dashboard_table_tokens(),
     cell: ({ row }) => (
       <div className="flex flex-col items-end gap-0.5 font-medium text-foreground">
         <span>{row.original.totalTokens === null ? "—" : formatInteger(row.original.totalTokens)}</span>
         {row.original.cachedTokens ? (
           <span className="text-xs font-normal text-muted-foreground">
-            cached {formatInteger(row.original.cachedTokens)}
+            {m.dashboard_cached({ count: formatInteger(row.original.cachedTokens) })}
           </span>
         ) : null}
       </div>
@@ -97,7 +98,7 @@ function tokensColumn(): ColumnDef<DashboardRequestItem> {
 function latencyColumn(): ColumnDef<DashboardRequestItem> {
   return {
     id: "latency",
-    header: "延迟 (ms)",
+    header: m.dashboard_table_latency_ms(),
     cell: ({ row }) => (
       <span className="text-xs text-muted-foreground">{formatInteger(row.original.latencyMs)}</span>
     ),
@@ -223,7 +224,7 @@ function RecentRequestsBody({ rows, scrollKey }: { rows: Row<DashboardRequestIte
 }
 
 export function RecentRequestsTable({ items, scrollKey }: RecentRequestsTableProps) {
-  const columns = useMemo(() => buildColumns(), []);
+  const columns = buildColumns();
 
   const table = useReactTable({
     data: items,

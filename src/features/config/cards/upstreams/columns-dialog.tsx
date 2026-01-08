@@ -10,6 +10,7 @@ import {
 import { Label } from "@/components/ui/label";
 import { UPSTREAM_COLUMNS } from "@/features/config/cards/upstreams/constants";
 import type { ColumnVisibility, UpstreamColumnId } from "@/features/config/cards/upstreams/types";
+import { m } from "@/paraglide/messages.js";
 
 type ColumnsDialogProps = {
   open: boolean;
@@ -23,8 +24,8 @@ export function ColumnsDialog({ open, visibility, onOpenChange, onToggleColumn }
     <AlertDialog open={open} onOpenChange={onOpenChange}>
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>Visible columns</AlertDialogTitle>
-          <AlertDialogDescription>Select which fields to display in the table.</AlertDialogDescription>
+          <AlertDialogTitle>{m.upstreams_columns_title()}</AlertDialogTitle>
+          <AlertDialogDescription>{m.upstreams_columns_description()}</AlertDialogDescription>
         </AlertDialogHeader>
         <div className="grid gap-3">
           {UPSTREAM_COLUMNS.map((column) => {
@@ -38,16 +39,15 @@ export function ColumnsDialog({ open, visibility, onOpenChange, onToggleColumn }
                   onChange={() => onToggleColumn(column.id)}
                   className="size-4 rounded border-border/70 bg-background shadow-sm"
                 />
-                <Label htmlFor={checkboxId}>{column.label}</Label>
+                <Label htmlFor={checkboxId}>{column.label()}</Label>
               </div>
             );
           })}
         </div>
         <AlertDialogFooter>
-          <AlertDialogCancel>Close</AlertDialogCancel>
+          <AlertDialogCancel>{m.common_close()}</AlertDialogCancel>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
   );
 }
-

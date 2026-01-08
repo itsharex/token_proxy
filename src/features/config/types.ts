@@ -1,6 +1,8 @@
+import { m } from "@/paraglide/messages.js";
+
 export const UPSTREAM_STRATEGIES = [
-  { value: "priority_round_robin", label: "Priority Round Robin" },
-  { value: "priority_fill_first", label: "Priority Fill First" },
+  { value: "priority_round_robin", label: () => m.upstream_strategy_priority_round_robin() },
+  { value: "priority_fill_first", label: () => m.upstream_strategy_priority_fill_first() },
 ] as const;
 
 export type UpstreamStrategy = (typeof UPSTREAM_STRATEGIES)[number]["value"];
