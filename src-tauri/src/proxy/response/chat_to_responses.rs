@@ -383,7 +383,7 @@ where
         self.sent_done = true;
 
         let completed_at = (super::now_ms() / 1000) as i64;
-        let usage = self.collector.finish().map(usage_to_value);
+        let usage = self.collector.finish().usage.map(usage_to_value);
 
         let mut snapshots = Vec::new();
         if let Some(message) = &self.message {

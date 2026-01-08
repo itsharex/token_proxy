@@ -1,12 +1,12 @@
 use axum::{
-    body::Body,
+    body::{Body, Bytes},
     extract::{DefaultBodyLimit, State},
     http::{HeaderMap, Method, StatusCode, Uri},
     response::Response,
     routing::any,
     Router,
 };
-use serde_json::Value;
+use serde_json::{Map, Value};
 use std::{
     collections::HashMap,
     sync::{atomic::AtomicUsize, Arc},
@@ -27,9 +27,13 @@ use super::{
     ProxyState, RequestMeta,
 };
 
-const PROVIDER_CLAUDE: &str = "claude";
-const CLAUDE_MESSAGES_PREFIX: &str = "/v1/messages";
-const CLAUDE_COMPLETE_PATH: &str = "/v1/complete";
+const PROVIDER_ANTHROPIC: &str = "anthropic";
+const PROVIDER_GEMINI: &str = "gemini";
+const ANTHROPIC_MESSAGES_PREFIX: &str = "/v1/messages";
+const ANTHROPIC_COMPLETE_PATH: &str = "/v1/complete";
+const GEMINI_MODELS_PREFIX: &str = "/v1beta/models/";
+const GEMINI_GENERATE_SUFFIX: &str = ":generateContent";
+const GEMINI_STREAM_SUFFIX: &str = ":streamGenerateContent";
 const REQUEST_META_LIMIT_BYTES: usize = 2 * 1024 * 1024;
 const REQUEST_TRANSFORM_LIMIT_BYTES: usize = 4 * 1024 * 1024;
 
@@ -43,13 +47,29 @@ struct DispatchPlan {
 fn resolve_dispatch_plan(config: &ProxyConfig, path: &str) -> Result<DispatchPlan, Response> {
     let has_chat = config.provider_upstreams(PROVIDER_CHAT).is_some();
     let has_responses = config.provider_upstreams(PROVIDER_RESPONSES).is_some();
-    let has_claude = config.provider_upstreams(PROVIDER_CLAUDE).is_some();
+    let has_anthropic = config.provider_upstreams(PROVIDER_ANTHROPIC).is_some();
+    let has_gemini = config.provider_upstreams(PROVIDER_GEMINI).is_some();
     let allow_format_conversion = config.enable_api_format_conversion;
 
-    if is_claude_path(path) {
-        if has_claude {
+    if is_gemini_path(path) {
+        if has_gemini {
             return Ok(DispatchPlan {
-                provider: PROVIDER_CLAUDE,
+                provider: PROVIDER_GEMINI,
+                outbound_path: None,
+                request_transform: FormatTransform::None,
+                response_transform: FormatTransform::None,
+            });
+        }
+        return Err(http::error_response(
+            StatusCode::BAD_GATEWAY,
+            "No available upstream configured.",
+        ));
+    }
+
+    if is_anthropic_path(path) {
+        if has_anthropic {
+            return Ok(DispatchPlan {
+                provider: PROVIDER_ANTHROPIC,
                 outbound_path: None,
                 request_transform: FormatTransform::None,
                 response_transform: FormatTransform::None,
@@ -78,9 +98,9 @@ fn resolve_dispatch_plan(config: &ProxyConfig, path: &str) -> Result<DispatchPla
                 response_transform: FormatTransform::None,
             });
         }
-        if has_claude {
+        if has_anthropic {
             return Ok(DispatchPlan {
-                provider: PROVIDER_CLAUDE,
+                provider: PROVIDER_ANTHROPIC,
                 outbound_path: None,
                 request_transform: FormatTransform::None,
                 response_transform: FormatTransform::None,
@@ -239,7 +259,7 @@ async fn proxy_request(
             )
         }
     };
-    let meta = parse_request_meta_best_effort(&body).await;
+    let meta = parse_request_meta_best_effort(&path, &body).await;
     let outbound_path = plan.outbound_path.unwrap_or(path.as_str());
     let outbound_path_with_query = uri
         .query()
@@ -247,6 +267,17 @@ async fn proxy_request(
         .unwrap_or_else(|| outbound_path.to_string());
 
     let outbound_body = match maybe_transform_request_body(plan.request_transform, body).await {
+        Ok(body) => body,
+        Err(response) => return response,
+    };
+    let outbound_body = match maybe_force_openai_stream_options_include_usage(
+        plan.provider,
+        outbound_path,
+        &meta,
+        outbound_body,
+    )
+    .await
+    {
         Ok(body) => body,
         Err(response) => return response,
     };
@@ -278,46 +309,73 @@ fn extract_request_path(uri: &Uri) -> (String, String) {
     (path, path_with_query)
 }
 
-fn is_claude_path(path: &str) -> bool {
-    if path == CLAUDE_COMPLETE_PATH || path == CLAUDE_MESSAGES_PREFIX {
+fn is_anthropic_path(path: &str) -> bool {
+    if path == ANTHROPIC_COMPLETE_PATH || path == ANTHROPIC_MESSAGES_PREFIX {
         return true;
     }
-    if !path.starts_with(CLAUDE_MESSAGES_PREFIX) {
+    if !path.starts_with(ANTHROPIC_MESSAGES_PREFIX) {
         return false;
     }
     path.as_bytes()
-        .get(CLAUDE_MESSAGES_PREFIX.len())
+        .get(ANTHROPIC_MESSAGES_PREFIX.len())
         .is_some_and(|byte| *byte == b'/')
 }
 
-async fn parse_request_meta_best_effort(body: &ReplayableBody) -> RequestMeta {
+fn is_gemini_path(path: &str) -> bool {
+    if !path.starts_with(GEMINI_MODELS_PREFIX) {
+        return false;
+    }
+    path.ends_with(GEMINI_GENERATE_SUFFIX) || path.ends_with(GEMINI_STREAM_SUFFIX)
+}
+
+fn is_gemini_stream_path(path: &str) -> bool {
+    path.starts_with(GEMINI_MODELS_PREFIX) && path.ends_with(GEMINI_STREAM_SUFFIX)
+}
+
+fn parse_gemini_model_from_path(path: &str) -> Option<String> {
+    let rest = path.strip_prefix(GEMINI_MODELS_PREFIX)?;
+    let (model, _) = rest.split_once(':')?;
+    let model = model.trim();
+    if model.is_empty() {
+        None
+    } else {
+        Some(model.to_string())
+    }
+}
+
+async fn parse_request_meta_best_effort(path: &str, body: &ReplayableBody) -> RequestMeta {
+    let stream_from_path = is_gemini_stream_path(path);
+    let model_from_path = parse_gemini_model_from_path(path);
+
     let Some(bytes) = body
         .read_bytes_if_small(REQUEST_META_LIMIT_BYTES)
         .await
         .unwrap_or(None)
     else {
         return RequestMeta {
-            stream: false,
-            model: None,
+            stream: stream_from_path,
+            model: model_from_path,
         };
     };
     let value: Value = match serde_json::from_slice(&bytes) {
         Ok(value) => value,
         Err(_) => {
             return RequestMeta {
-                stream: false,
-                model: None,
+                stream: stream_from_path,
+                model: model_from_path,
             }
         }
     };
     let stream = value
         .get("stream")
         .and_then(Value::as_bool)
-        .unwrap_or(false);
+        .unwrap_or(false)
+        || stream_from_path;
     let model = value
         .get("model")
         .and_then(Value::as_str)
         .map(|value| value.to_string());
+    let model = model.or(model_from_path);
     RequestMeta { stream, model }
 }
 
@@ -350,13 +408,79 @@ async fn maybe_transform_request_body(
     Ok(ReplayableBody::from_bytes(outbound_bytes))
 }
 
+async fn maybe_force_openai_stream_options_include_usage(
+    provider: &str,
+    outbound_path: &str,
+    meta: &RequestMeta,
+    body: ReplayableBody,
+) -> Result<ReplayableBody, Response> {
+    if provider != PROVIDER_CHAT || outbound_path != CHAT_PATH || !meta.stream {
+        return Ok(body);
+    }
+
+    let Some(bytes) = body
+        .read_bytes_if_small(REQUEST_TRANSFORM_LIMIT_BYTES)
+        .await
+        .map_err(|err| {
+            http::error_response(
+                StatusCode::BAD_REQUEST,
+                format!("Failed to read request body: {err}"),
+            )
+        })?
+    else {
+        // Best-effort: request body too large, keep original.
+        return Ok(body);
+    };
+
+    let Ok(mut value) = serde_json::from_slice::<Value>(&bytes) else {
+        return Ok(body);
+    };
+    let Some(object) = value.as_object_mut() else {
+        return Ok(body);
+    };
+
+    let include_usage = object
+        .get("stream_options")
+        .and_then(Value::as_object)
+        .and_then(|options| options.get("include_usage"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    if include_usage {
+        return Ok(body);
+    }
+
+    let options = match object.get_mut("stream_options") {
+        Some(Value::Object(options)) => options,
+        _ => {
+            object.insert("stream_options".to_string(), Value::Object(Map::new()));
+            object
+                .get_mut("stream_options")
+                .and_then(Value::as_object_mut)
+                .expect("stream_options must be object")
+        }
+    };
+    options.insert("include_usage".to_string(), Value::Bool(true));
+
+    let outbound_bytes = serde_json::to_vec(&value)
+        .map(Bytes::from)
+        .map_err(|err| http::error_response(StatusCode::BAD_REQUEST, format!("Failed to serialize request: {err}")))?;
+    Ok(ReplayableBody::from_bytes(outbound_bytes))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     use std::{collections::HashMap, path::PathBuf};
 
+    use axum::body::Bytes;
     use crate::proxy::config::{ProviderUpstreams, ProxyConfig, UpstreamStrategy};
+
+    fn run_async<T>(future: impl std::future::Future<Output = T>) -> T {
+        tokio::runtime::Runtime::new()
+            .expect("create tokio runtime")
+            .block_on(future)
+    }
 
     fn config_with_providers(providers: &[&'static str], enable_api_format_conversion: bool) -> ProxyConfig {
         let mut upstreams = HashMap::new();
@@ -404,5 +528,63 @@ mod tests {
         assert_eq!(plan.outbound_path, Some(CHAT_PATH));
         assert_eq!(plan.request_transform, FormatTransform::ResponsesToChat);
         assert_eq!(plan.response_transform, FormatTransform::ChatToResponses);
+    }
+
+    #[test]
+    fn force_openai_chat_stream_usage_inserts_stream_options_include_usage() {
+        run_async(async {
+            let input = Bytes::from_static(br#"{"stream":true,"messages":[]}"#);
+            let meta = RequestMeta {
+                stream: true,
+                model: None,
+            };
+            let body = ReplayableBody::from_bytes(input);
+            let output = maybe_force_openai_stream_options_include_usage(
+                PROVIDER_CHAT,
+                CHAT_PATH,
+                &meta,
+                body,
+            )
+            .await
+            .expect("ok");
+            let bytes = output
+                .read_bytes_if_small(1024)
+                .await
+                .expect("read")
+                .expect("bytes");
+            let value: Value = serde_json::from_slice(&bytes).expect("json");
+            assert_eq!(value["stream_options"]["include_usage"], Value::Bool(true));
+        });
+    }
+
+    #[test]
+    fn gemini_route_requires_gemini_provider() {
+        let config = config_with_providers(&[PROVIDER_CHAT], false);
+        let response = resolve_dispatch_plan(&config, "/v1beta/models/gemini-1.5-flash:generateContent")
+            .err()
+            .expect("should reject");
+        assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+    }
+
+    #[test]
+    fn gemini_route_dispatches_to_gemini() {
+        let config = config_with_providers(&[PROVIDER_GEMINI], false);
+        let plan = resolve_dispatch_plan(&config, "/v1beta/models/gemini-1.5-flash:generateContent")
+            .expect("should dispatch");
+        assert_eq!(plan.provider, PROVIDER_GEMINI);
+        assert_eq!(plan.request_transform, FormatTransform::None);
+        assert_eq!(plan.response_transform, FormatTransform::None);
+    }
+
+    #[test]
+    fn gemini_meta_prefers_path_for_stream_and_model() {
+        let body = ReplayableBody::from_bytes(Bytes::from_static(b"{}"));
+        let rt = tokio::runtime::Runtime::new().expect("runtime");
+        let meta = rt.block_on(parse_request_meta_best_effort(
+            "/v1beta/models/gemini-1.5-flash:streamGenerateContent",
+            &body,
+        ));
+        assert!(meta.stream);
+        assert_eq!(meta.model.as_deref(), Some("gemini-1.5-flash"));
     }
 }

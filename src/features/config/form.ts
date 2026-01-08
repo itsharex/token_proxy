@@ -25,12 +25,21 @@ const DEFAULT_UPSTREAMS: UpstreamForm[] = [
     enabled: true,
   },
   {
-    id: "claude-default",
-    provider: "claude",
+    id: "anthropic-default",
+    provider: "anthropic",
     baseUrl: "https://api.anthropic.com",
     apiKey: "",
     priority: "0",
     index: "2",
+    enabled: true,
+  },
+  {
+    id: "gemini-default",
+    provider: "gemini",
+    baseUrl: "https://generativelanguage.googleapis.com",
+    apiKey: "",
+    priority: "0",
+    index: "3",
     enabled: true,
   },
 ];

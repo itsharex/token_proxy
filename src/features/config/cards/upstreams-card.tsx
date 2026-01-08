@@ -47,7 +47,7 @@ export function UpstreamsCard({ upstreams, showApiKeys, providerOptions, onToggl
     <Card data-slot="upstreams-card">
       <CardHeader>
         <CardTitle>Upstreams</CardTitle>
-        <CardDescription>Define provider pools and credentials. Use provider names <code>openai</code>, <code>openai-response</code> and/or <code>claude</code>.</CardDescription>
+        <CardDescription>Define provider pools and credentials. Use provider names <code>openai</code>, <code>openai-response</code>, <code>anthropic</code> and/or <code>gemini</code>.</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         <UpstreamsToolbar apiKeyVisible={apiKeyVisible} showApiKeys={showApiKeys} onToggleApiKeys={onToggleApiKeys} onAddClick={() => setEditor({ open: true, mode: "create", draft: createEmptyUpstream() })} onColumnsClick={() => setColumnsOpen(true)} />

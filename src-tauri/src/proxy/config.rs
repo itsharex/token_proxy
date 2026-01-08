@@ -83,12 +83,21 @@ impl Default for ProxyConfigFile {
                     enabled: true,
                 },
                 UpstreamConfig {
-                    id: "claude-default".to_string(),
-                    provider: "claude".to_string(),
+                    id: "anthropic-default".to_string(),
+                    provider: "anthropic".to_string(),
                     base_url: "https://api.anthropic.com".to_string(),
                     api_key: None,
                     priority: Some(0),
                     index: Some(2),
+                    enabled: true,
+                },
+                UpstreamConfig {
+                    id: "gemini-default".to_string(),
+                    provider: "gemini".to_string(),
+                    base_url: "https://generativelanguage.googleapis.com".to_string(),
+                    api_key: None,
+                    priority: Some(0),
+                    index: Some(3),
                     enabled: true,
                 },
             ],
@@ -765,7 +774,7 @@ mod tests {
             upstream_trailing_slash.upstream_url("/v1/responses"),
             "https://api.example.com/openai/v1/responses"
         );
-        // claude: /v1/messages
+        // anthropic: /v1/messages
         assert_eq!(
             upstream_trailing_slash.upstream_url("/v1/messages"),
             "https://api.example.com/openai/v1/messages"

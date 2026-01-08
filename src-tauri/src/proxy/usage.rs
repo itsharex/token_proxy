@@ -2,47 +2,82 @@ use axum::body::Bytes;
 use serde_json::Value;
 
 use super::sse::SseEventParser;
-use super::log::TokenUsage;
+use super::log::{TokenUsage, UsageSnapshot};
 
 pub(crate) struct SseUsageCollector {
     parser: SseEventParser,
-    usage: Option<TokenUsage>,
+    snapshot: UsageSnapshot,
 }
 
 impl SseUsageCollector {
     pub(crate) fn new() -> Self {
         Self {
             parser: SseEventParser::new(),
-            usage: None,
+            snapshot: UsageSnapshot {
+                usage: None,
+                cached_tokens: None,
+                usage_json: None,
+            },
         }
     }
 
     pub(crate) fn push_chunk(&mut self, chunk: &[u8]) {
-        let usage = &mut self.usage;
-        self.parser.push_chunk(chunk, |data| update_usage(usage, &data));
+        let snapshot = &mut self.snapshot;
+        self.parser
+            .push_chunk(chunk, |data| update_usage(snapshot, &data));
     }
 
-    pub(crate) fn finish(&mut self) -> Option<TokenUsage> {
-        let usage = &mut self.usage;
-        self.parser.finish(|data| update_usage(usage, &data));
-        self.usage.clone()
+    pub(crate) fn finish(&mut self) -> UsageSnapshot {
+        let snapshot = &mut self.snapshot;
+        self.parser.finish(|data| update_usage(snapshot, &data));
+        self.snapshot.clone()
     }
 }
 
-pub(crate) fn extract_usage_from_response(bytes: &Bytes) -> Option<TokenUsage> {
-    let value: Value = serde_json::from_slice(bytes).ok()?;
-    let usage = value.get("usage")?;
-    usage_from_value(usage)
+pub(crate) fn extract_usage_from_response(bytes: &Bytes) -> UsageSnapshot {
+    let Ok(value) = serde_json::from_slice::<Value>(bytes) else {
+        return UsageSnapshot {
+            usage: None,
+            cached_tokens: None,
+            usage_json: None,
+        };
+    };
+
+    if let Some(usage) = value.get("usage") {
+        return snapshot_from_usage_value(usage);
+    }
+
+    value
+        .get("usageMetadata")
+        .map(snapshot_from_usage_metadata_value)
+        .unwrap_or(UsageSnapshot {
+            usage: None,
+            cached_tokens: None,
+            usage_json: None,
+        })
 }
 
-fn extract_usage_from_event(value: &Value) -> Option<TokenUsage> {
-    if let Some(usage) = value.get("usage").and_then(usage_from_value) {
-        return Some(usage);
+fn extract_usage_from_event(value: &Value) -> Option<UsageSnapshot> {
+    if let Some(usage) = value.get("usage") {
+        return Some(snapshot_from_usage_value(usage));
     }
+
+    if let Some(usage) = value.get("message").and_then(|message| message.get("usage")) {
+        return Some(snapshot_from_usage_value(usage));
+    }
+
+    if let Some(usage) = value.get("response").and_then(|response| response.get("usage")) {
+        return Some(snapshot_from_usage_value(usage));
+    }
+
+    if let Some(metadata) = value.get("usageMetadata") {
+        return Some(snapshot_from_usage_metadata_value(metadata));
+    }
+
     value
         .get("response")
-        .and_then(|response| response.get("usage"))
-        .and_then(usage_from_value)
+        .and_then(|response| response.get("usageMetadata"))
+        .map(snapshot_from_usage_metadata_value)
 }
 
 fn usage_from_value(value: &Value) -> Option<TokenUsage> {
@@ -67,14 +102,156 @@ fn usage_from_value(value: &Value) -> Option<TokenUsage> {
     None
 }
 
-fn update_usage(usage: &mut Option<TokenUsage>, data: &str) {
+fn gemini_usage_from_value(value: &Value) -> Option<TokenUsage> {
+    // Gemini API 返回 `usageMetadata`：prompt/candidates/total token 计数。
+    let input_tokens = value.get("promptTokenCount").and_then(Value::as_u64);
+    let output_tokens = value
+        .get("candidatesTokenCount")
+        .and_then(Value::as_u64);
+    let total_tokens = value.get("totalTokenCount").and_then(Value::as_u64);
+
+    if input_tokens.is_some() || output_tokens.is_some() || total_tokens.is_some() {
+        return Some(TokenUsage {
+            input_tokens,
+            output_tokens,
+            total_tokens,
+        });
+    }
+    None
+}
+
+fn snapshot_from_usage_value(value: &Value) -> UsageSnapshot {
+    UsageSnapshot {
+        usage: usage_from_value(value),
+        cached_tokens: cached_tokens_from_usage_value(value),
+        usage_json: Some(value.clone()),
+    }
+}
+
+fn snapshot_from_usage_metadata_value(value: &Value) -> UsageSnapshot {
+    UsageSnapshot {
+        usage: gemini_usage_from_value(value),
+        cached_tokens: None,
+        usage_json: Some(value.clone()),
+    }
+}
+
+fn cached_tokens_from_usage_value(value: &Value) -> Option<u64> {
+    let cache_read = value.get("cache_read_input_tokens").and_then(Value::as_u64);
+    let cache_creation = value
+        .get("cache_creation_input_tokens")
+        .and_then(Value::as_u64);
+    if cache_read.is_some() || cache_creation.is_some() {
+        return match (cache_read, cache_creation) {
+            (Some(left), Some(right)) => left.checked_add(right),
+            (Some(left), None) => Some(left),
+            (None, Some(right)) => Some(right),
+            (None, None) => None,
+        };
+    }
+
+    value
+        .get("input_tokens_details")
+        .and_then(|details| details.get("cached_tokens"))
+        .and_then(Value::as_u64)
+        .or_else(|| {
+            value
+                .get("prompt_tokens_details")
+                .and_then(|details| details.get("cached_tokens"))
+                .and_then(Value::as_u64)
+        })
+        .or_else(|| value.get("cached_tokens").and_then(Value::as_u64))
+}
+
+fn update_usage(snapshot: &mut UsageSnapshot, data: &str) {
     if data == "[DONE]" {
         return;
     }
     let Ok(value) = serde_json::from_str::<Value>(data) else {
         return;
     };
-    if let Some(updated) = extract_usage_from_event(&value) {
-        *usage = Some(updated);
+    let Some(updated) = extract_usage_from_event(&value) else {
+        return;
+    };
+    if updated.usage_json.is_some() {
+        snapshot.usage_json = updated.usage_json;
+        snapshot.usage = updated.usage;
+        snapshot.cached_tokens = updated.cached_tokens;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn extract_usage_from_gemini_usage_metadata() {
+        let bytes = Bytes::from_static(
+            br#"{"usageMetadata":{"promptTokenCount":1,"candidatesTokenCount":2,"totalTokenCount":3}}"#,
+        );
+        let usage = extract_usage_from_response(&bytes).usage.expect("usage");
+        assert_eq!(usage.input_tokens, Some(1));
+        assert_eq!(usage.output_tokens, Some(2));
+        assert_eq!(usage.total_tokens, Some(3));
+    }
+
+    #[test]
+    fn sse_usage_collector_extracts_gemini_usage_metadata() {
+        let mut collector = SseUsageCollector::new();
+        collector.push_chunk(
+            b"data: {\"usageMetadata\":{\"promptTokenCount\":1,\"candidatesTokenCount\":2,\"totalTokenCount\":3}}\n\n",
+        );
+        let usage = collector.finish().usage.expect("usage");
+        assert_eq!(usage.input_tokens, Some(1));
+        assert_eq!(usage.output_tokens, Some(2));
+        assert_eq!(usage.total_tokens, Some(3));
+    }
+
+    #[test]
+    fn extract_cached_tokens_from_openai_input_tokens_details() {
+        let bytes = Bytes::from_static(
+            br#"{"usage":{"input_tokens":1,"output_tokens":2,"total_tokens":3,"input_tokens_details":{"cached_tokens":4}}}"#,
+        );
+        let snapshot = extract_usage_from_response(&bytes);
+        assert_eq!(snapshot.cached_tokens, Some(4));
+        assert_eq!(snapshot.usage_json.expect("usage_json")["input_tokens"], json!(1));
+    }
+
+    #[test]
+    fn extract_cached_tokens_from_openai_prompt_tokens_details() {
+        let bytes = Bytes::from_static(
+            br#"{"usage":{"prompt_tokens":1,"completion_tokens":2,"total_tokens":3,"prompt_tokens_details":{"cached_tokens":4}}}"#,
+        );
+        let snapshot = extract_usage_from_response(&bytes);
+        assert_eq!(snapshot.cached_tokens, Some(4));
+        assert_eq!(snapshot.usage_json.expect("usage_json")["prompt_tokens"], json!(1));
+    }
+
+    #[test]
+    fn extract_cached_tokens_from_anthropic_cache_fields() {
+        let bytes = Bytes::from_static(
+            br#"{"usage":{"input_tokens":1,"output_tokens":2,"cache_read_input_tokens":4,"cache_creation_input_tokens":5}}"#,
+        );
+        let snapshot = extract_usage_from_response(&bytes);
+        assert_eq!(snapshot.cached_tokens, Some(9));
+        assert_eq!(
+            snapshot.usage_json.expect("usage_json")["cache_read_input_tokens"],
+            json!(4)
+        );
+    }
+
+    #[test]
+    fn sse_usage_collector_extracts_anthropic_message_usage_and_cache_tokens() {
+        let mut collector = SseUsageCollector::new();
+        collector.push_chunk(
+            b"data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":1,\"output_tokens\":2,\"cache_read_input_tokens\":4,\"cache_creation_input_tokens\":5}}}\n\n",
+        );
+        let snapshot = collector.finish();
+        assert_eq!(snapshot.cached_tokens, Some(9));
+        let usage = snapshot.usage.expect("usage");
+        assert_eq!(usage.input_tokens, Some(1));
+        assert_eq!(usage.output_tokens, Some(2));
+        assert_eq!(usage.total_tokens, None);
     }
 }

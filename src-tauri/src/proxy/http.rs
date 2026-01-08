@@ -18,7 +18,7 @@ const KEEP_ALIVE: HeaderName = HeaderName::from_static("keep-alive");
 const X_OPENAI_API_KEY: &str = "x-openai-api-key";
 const X_API_KEY: &str = "x-api-key";
 const X_ANTHROPIC_API_KEY: &str = "x-anthropic-api-key";
-const X_CLAUDE_API_KEY: &str = "x-claude-api-key";
+const X_GOOG_API_KEY: &str = "x-goog-api-key";
 
 pub(crate) fn ensure_local_auth(config: &ProxyConfig, headers: &HeaderMap) -> Result<(), Response> {
     let Some(expected) = config.local_api_key.as_ref() else {
@@ -67,7 +67,8 @@ fn mask_key(key: &str) -> String {
 #[derive(Clone, Default)]
 pub(crate) struct RequestAuth {
     pub(crate) openai_bearer: Option<HeaderValue>,
-    pub(crate) claude_api_key: Option<HeaderValue>,
+    pub(crate) anthropic_api_key: Option<HeaderValue>,
+    pub(crate) gemini_api_key: Option<String>,
     pub(crate) authorization_fallback: Option<HeaderValue>,
 }
 
@@ -101,7 +102,6 @@ pub(crate) fn resolve_request_auth(
     if let Some(value) = headers
         .get(X_API_KEY)
         .or_else(|| headers.get(X_ANTHROPIC_API_KEY))
-        .or_else(|| headers.get(X_CLAUDE_API_KEY))
     {
         let Ok(_) = value.to_str() else {
             return Err(error_response(
@@ -109,12 +109,25 @@ pub(crate) fn resolve_request_auth(
                 "Upstream API key is invalid.",
             ));
         };
-        auth.claude_api_key = Some(value.clone());
+        auth.anthropic_api_key = Some(value.clone());
     }
 
     if config.local_api_key.is_none() {
         if let Some(value) = headers.get(AUTHORIZATION) {
             auth.authorization_fallback = Some(value.clone());
+        }
+    }
+
+    if let Some(value) = headers.get(X_GOOG_API_KEY) {
+        let Ok(value) = value.to_str() else {
+            return Err(error_response(
+                StatusCode::UNAUTHORIZED,
+                "Upstream API key is invalid.",
+            ));
+        };
+        let value = value.trim();
+        if !value.is_empty() {
+            auth.gemini_api_key = Some(value.to_string());
         }
     }
     Ok(auth)
@@ -130,16 +143,16 @@ pub(crate) fn resolve_upstream_auth(
         upstream_id = %upstream.id,
         has_upstream_key = upstream.api_key.is_some(),
         has_openai_bearer = request_auth.openai_bearer.is_some(),
-        has_claude_key = request_auth.claude_api_key.is_some(),
+        has_anthropic_key = request_auth.anthropic_api_key.is_some(),
         has_auth_fallback = request_auth.authorization_fallback.is_some(),
         "resolving upstream auth"
     );
 
     match provider {
-        "claude" => {
+        "anthropic" => {
             let value = match upstream.api_key.as_ref() {
                 Some(key) => {
-                    tracing::debug!("using upstream.api_key for Claude");
+                    tracing::debug!("using upstream.api_key for Anthropic");
                     HeaderValue::from_str(key).map_err(|_| {
                         error_response(
                             StatusCode::UNAUTHORIZED,
@@ -148,11 +161,11 @@ pub(crate) fn resolve_upstream_auth(
                     })?
                 }
                 None => {
-                    let Some(value) = request_auth.claude_api_key.clone() else {
-                        tracing::warn!("no API key for Claude");
+                    let Some(value) = request_auth.anthropic_api_key.clone() else {
+                        tracing::warn!("no API key for Anthropic");
                         return Ok(None);
                     };
-                    tracing::debug!("using request_auth.claude_api_key for Claude");
+                    tracing::debug!("using request_auth.anthropic_api_key for Anthropic");
                     value
                 }
             };
@@ -217,7 +230,7 @@ pub(crate) fn build_upstream_headers(
             || name == &auth.name
             || name.as_str().eq_ignore_ascii_case(X_OPENAI_API_KEY)
             || name.as_str().eq_ignore_ascii_case(X_ANTHROPIC_API_KEY)
-            || name.as_str().eq_ignore_ascii_case(X_CLAUDE_API_KEY)
+            || name.as_str().eq_ignore_ascii_case(X_GOOG_API_KEY)
         {
             continue;
         }

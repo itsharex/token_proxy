@@ -10,6 +10,7 @@ export type DashboardSummary = {
   totalTokens: number;
   inputTokens: number;
   outputTokens: number;
+  cachedTokens: number;
   avgLatencyMs: number;
 };
 
@@ -17,6 +18,7 @@ export type DashboardProviderStat = {
   provider: string;
   requests: number;
   totalTokens: number;
+  cachedTokens: number;
 };
 
 export type DashboardRequestItem = {
@@ -28,6 +30,7 @@ export type DashboardRequestItem = {
   stream: boolean;
   status: number;
   totalTokens: number | null;
+  cachedTokens: number | null;
   latencyMs: number;
   upstreamRequestId: string | null;
 };
@@ -38,4 +41,3 @@ export type DashboardSnapshot = {
   recent: DashboardRequestItem[];
   truncated: boolean;
 };
-

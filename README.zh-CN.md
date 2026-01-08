@@ -2,7 +2,7 @@
 
 [English](README.md) | 中文
 
-中转 ai api 的工具，比如转发 openai api 格式，gemini ai api 格式，claude ai api 格式，在本地运行，用于统计总 token 用量的、也可以负载均衡、优先级之类的
+中转 ai api 的工具，比如转发 openai api 格式，gemini ai api 格式，Anthropic api 格式，在本地运行，用于统计总 token 用量的、也可以负载均衡、优先级之类的
 
 ## 配置说明
 
@@ -40,12 +40,21 @@
       "enabled": true
     },
     {
-      "id": "claude-default",
-      "provider": "claude",
+      "id": "anthropic-default",
+      "provider": "anthropic",
       "base_url": "https://api.anthropic.com",
       "api_key": null,
       "priority": 0,
       "index": 2,
+      "enabled": true
+    },
+    {
+      "id": "gemini-default",
+      "provider": "gemini",
+      "base_url": "https://generativelanguage.googleapis.com",
+      "api_key": null,
+      "priority": 0,
+      "index": 3,
       "enabled": true
     }
   ]
@@ -53,8 +62,9 @@
 ```
 
 说明：
-- 路由规则内置：`/v1/chat/completions` → `openai`，`/v1/responses` → `openai-response`，`/v1/messages`（及子路径）/`/v1/complete` → `claude`；OpenAI Chat/Responses 互转由 `enable_api_format_conversion` 控制（默认：`false`）。Claude 不做格式转换。
-- Claude 鉴权使用 `x-api-key`；当请求未携带 `anthropic-version` 时，代理默认补 `2023-06-01`（可被请求头覆盖）。
+- 路由规则内置：`/v1/chat/completions` → `openai`，`/v1/responses` → `openai-response`，`/v1/messages`（及子路径）/`/v1/complete` → `anthropic`，`/v1beta/models/*:generateContent`/`*:streamGenerateContent` → `gemini`；OpenAI Chat/Responses 互转由 `enable_api_format_conversion` 控制（默认：`false`）。Anthropic/Gemini 不做格式转换。
+- Anthropic 鉴权使用 `x-api-key`；当请求未携带 `anthropic-version` 时，代理默认补 `2023-06-01`（可被请求头覆盖）。
+- Gemini（Google 官方 Gemini API）鉴权使用 query 参数 `key`（若请求未携带且 upstream 配置了 `api_key`，代理会自动补齐）；流式为 SSE，支持从 `usageMetadata` 统计 token。
 - `priority` 越大优先级越高；同优先级内按 `index` 升序。
 - `index` 缺失时，保存配置会在当前最大 `index` 之后按顺序全局自动补齐。
 - `enabled` 用于禁用某个 upstream 而不删除；禁用的 upstream 不参与负载均衡。

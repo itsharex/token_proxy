@@ -23,6 +23,7 @@ pub(crate) struct DashboardSummary {
     pub(crate) total_tokens: u64,
     pub(crate) input_tokens: u64,
     pub(crate) output_tokens: u64,
+    pub(crate) cached_tokens: u64,
     pub(crate) avg_latency_ms: u64,
 }
 
@@ -32,6 +33,7 @@ pub(crate) struct DashboardProviderStat {
     pub(crate) provider: String,
     pub(crate) requests: u64,
     pub(crate) total_tokens: u64,
+    pub(crate) cached_tokens: u64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -45,6 +47,7 @@ pub(crate) struct DashboardRequestItem {
     pub(crate) stream: bool,
     pub(crate) status: u16,
     pub(crate) total_tokens: Option<u64>,
+    pub(crate) cached_tokens: Option<u64>,
     pub(crate) latency_ms: u64,
     pub(crate) upstream_request_id: Option<String>,
 }
@@ -83,6 +86,7 @@ SELECT
   END), 0) AS total_tokens,
   COALESCE(SUM(COALESCE(input_tokens, 0)), 0) AS input_tokens,
   COALESCE(SUM(COALESCE(output_tokens, 0)), 0) AS output_tokens,
+  COALESCE(SUM(COALESCE(cached_tokens, 0)), 0) AS cached_tokens,
   COALESCE(SUM(latency_ms), 0) AS latency_sum_ms
 FROM request_logs
 WHERE (?1 IS NULL OR ts_ms >= ?1) AND (?2 IS NULL OR ts_ms <= ?2);
@@ -100,6 +104,7 @@ WHERE (?1 IS NULL OR ts_ms >= ?1) AND (?2 IS NULL OR ts_ms <= ?2);
     let total_tokens = i64_to_u64(row.try_get("total_tokens").unwrap_or(0));
     let input_tokens = i64_to_u64(row.try_get("input_tokens").unwrap_or(0));
     let output_tokens = i64_to_u64(row.try_get("output_tokens").unwrap_or(0));
+    let cached_tokens = i64_to_u64(row.try_get("cached_tokens").unwrap_or(0));
     let latency_sum_ms = i64_to_u64(row.try_get("latency_sum_ms").unwrap_or(0));
 
     let avg_latency_ms = if total_requests == 0 {
@@ -117,7 +122,8 @@ SELECT
     WHEN total_tokens IS NOT NULL THEN total_tokens
     WHEN input_tokens IS NOT NULL OR output_tokens IS NOT NULL THEN COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0)
     ELSE 0
-  END), 0) AS total_tokens
+  END), 0) AS total_tokens,
+  COALESCE(SUM(COALESCE(cached_tokens, 0)), 0) AS cached_tokens
 FROM request_logs
 WHERE (?1 IS NULL OR ts_ms >= ?1) AND (?2 IS NULL OR ts_ms <= ?2)
 GROUP BY provider
@@ -134,10 +140,12 @@ ORDER BY total_tokens DESC;
         let provider: String = row.try_get("provider").ok()?;
         let requests: i64 = row.try_get("requests").ok()?;
         let total_tokens: i64 = row.try_get("total_tokens").ok()?;
+        let cached_tokens: i64 = row.try_get("cached_tokens").ok()?;
         Some(DashboardProviderStat {
             provider,
             requests: i64_to_u64(requests),
             total_tokens: i64_to_u64(total_tokens),
+            cached_tokens: i64_to_u64(cached_tokens),
         })
     })
     .collect::<Vec<_>>();
@@ -157,6 +165,7 @@ SELECT
     WHEN input_tokens IS NOT NULL OR output_tokens IS NOT NULL THEN COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0)
     ELSE NULL
   END AS total_tokens,
+  cached_tokens,
   latency_ms,
   upstream_request_id
 FROM request_logs
@@ -181,6 +190,7 @@ LIMIT ?3;
         let stream: bool = row.try_get("stream").unwrap_or(false);
         let status: i64 = row.try_get("status").unwrap_or(0);
         let total_tokens: Option<i64> = row.try_get("total_tokens").ok()?;
+        let cached_tokens: Option<i64> = row.try_get("cached_tokens").ok()?;
         let latency_ms: i64 = row.try_get("latency_ms").unwrap_or(0);
         let upstream_request_id: Option<String> = row.try_get("upstream_request_id").ok()?;
         Some(DashboardRequestItem {
@@ -192,6 +202,7 @@ LIMIT ?3;
             stream,
             status: i64_to_u16(status),
             total_tokens: total_tokens.map(i64_to_u64),
+            cached_tokens: cached_tokens.map(i64_to_u64),
             latency_ms: i64_to_u64(latency_ms),
             upstream_request_id,
         })
@@ -206,6 +217,7 @@ LIMIT ?3;
             total_tokens,
             input_tokens,
             output_tokens,
+            cached_tokens,
             avg_latency_ms,
         },
         providers,

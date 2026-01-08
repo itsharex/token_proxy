@@ -193,9 +193,11 @@ export function DashboardScreen() {
             <StatCard
               title="总 Tokens"
               value={NUMBER_FORMAT.format(snapshot?.summary.totalTokens ?? 0)}
-              hint={`输入 ${NUMBER_FORMAT.format(snapshot?.summary.inputTokens ?? 0)} · 输出 ${NUMBER_FORMAT.format(
-                snapshot?.summary.outputTokens ?? 0
-              )}`}
+              hint={`输入 ${NUMBER_FORMAT.format(snapshot?.summary.inputTokens ?? 0)}${
+                snapshot?.summary.cachedTokens
+                  ? `（cached ${NUMBER_FORMAT.format(snapshot?.summary.cachedTokens ?? 0)}）`
+                  : ""
+              } · 输出 ${NUMBER_FORMAT.format(snapshot?.summary.outputTokens ?? 0)}`}
             />
             <StatCard
               title="平均延迟"
@@ -224,9 +226,16 @@ export function DashboardScreen() {
                             {NUMBER_FORMAT.format(stat.requests)} requests
                           </p>
                         </div>
-                        <Badge variant="outline" className="border-border/60">
-                          {NUMBER_FORMAT.format(stat.totalTokens)} tokens
-                        </Badge>
+                        <div className="flex items-center gap-2">
+                          <Badge variant="outline" className="border-border/60">
+                            {NUMBER_FORMAT.format(stat.totalTokens)} tokens
+                          </Badge>
+                          {stat.cachedTokens ? (
+                            <Badge variant="secondary" className="border border-border/60">
+                              {NUMBER_FORMAT.format(stat.cachedTokens)} cached
+                            </Badge>
+                          ) : null}
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -275,7 +284,16 @@ export function DashboardScreen() {
                               <Badge variant={statusToVariant(item.status)}>{item.status}</Badge>
                             </td>
                             <td className="px-3 py-2 text-right font-medium text-foreground">
-                              {item.totalTokens === null ? "—" : NUMBER_FORMAT.format(item.totalTokens)}
+                              <div className="flex flex-col items-end gap-0.5">
+                                <span>
+                                  {item.totalTokens === null ? "—" : NUMBER_FORMAT.format(item.totalTokens)}
+                                </span>
+                                {item.cachedTokens ? (
+                                  <span className="text-xs font-normal text-muted-foreground">
+                                    cached {NUMBER_FORMAT.format(item.cachedTokens)}
+                                  </span>
+                                ) : null}
+                              </div>
                             </td>
                             <td className="px-3 py-2 text-right text-xs text-muted-foreground">
                               {NUMBER_FORMAT.format(item.latencyMs)} ms
@@ -296,4 +314,3 @@ export function DashboardScreen() {
     </section>
   );
 }
-

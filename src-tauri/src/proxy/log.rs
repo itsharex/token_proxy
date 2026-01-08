@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use sqlx::SqlitePool;
 use std::{
     path::PathBuf,
@@ -13,6 +14,13 @@ pub(crate) struct TokenUsage {
     pub(crate) total_tokens: Option<u64>,
 }
 
+#[derive(Clone, Serialize, Deserialize)]
+pub(crate) struct UsageSnapshot {
+    pub(crate) usage: Option<TokenUsage>,
+    pub(crate) cached_tokens: Option<u64>,
+    pub(crate) usage_json: Option<Value>,
+}
+
 #[derive(Serialize, Deserialize)]
 pub(crate) struct LogEntry {
     pub(crate) ts_ms: u128,
@@ -23,6 +31,8 @@ pub(crate) struct LogEntry {
     pub(crate) stream: bool,
     pub(crate) status: u16,
     pub(crate) usage: Option<TokenUsage>,
+    pub(crate) cached_tokens: Option<u64>,
+    pub(crate) usage_json: Option<Value>,
     pub(crate) upstream_request_id: Option<String>,
     pub(crate) latency_ms: u128,
 }
@@ -83,7 +93,7 @@ impl LogWriter {
     }
 }
 
-pub(crate) fn build_log_entry(context: &LogContext, usage: Option<TokenUsage>) -> LogEntry {
+pub(crate) fn build_log_entry(context: &LogContext, usage: UsageSnapshot) -> LogEntry {
     LogEntry {
         ts_ms: now_ms(),
         path: context.path.clone(),
@@ -92,7 +102,9 @@ pub(crate) fn build_log_entry(context: &LogContext, usage: Option<TokenUsage>) -
         model: context.model.clone(),
         stream: context.stream,
         status: context.status,
-        usage,
+        usage: usage.usage,
+        cached_tokens: usage.cached_tokens,
+        usage_json: usage.usage_json,
         upstream_request_id: context.upstream_request_id.clone(),
         latency_ms: context.start.elapsed().as_millis(),
     }
@@ -110,6 +122,8 @@ async fn insert_log_entry(pool: &SqlitePool, entry: &LogEntry) -> Result<(), sql
     let input_tokens = usage.and_then(|usage| usage.input_tokens).map(to_i64_u64);
     let output_tokens = usage.and_then(|usage| usage.output_tokens).map(to_i64_u64);
     let total_tokens = usage.and_then(|usage| usage.total_tokens).map(to_i64_u64);
+    let cached_tokens = entry.cached_tokens.map(to_i64_u64);
+    let usage_json = entry.usage_json.as_ref().map(Value::to_string);
 
     sqlx::query(
         r#"
@@ -124,9 +138,11 @@ INSERT INTO request_logs (
   input_tokens,
   output_tokens,
   total_tokens,
+  cached_tokens,
+  usage_json,
   upstream_request_id,
   latency_ms
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 "#,
     )
     .bind(to_i64_u128(entry.ts_ms))
@@ -139,6 +155,8 @@ INSERT INTO request_logs (
     .bind(input_tokens)
     .bind(output_tokens)
     .bind(total_tokens)
+    .bind(cached_tokens)
+    .bind(usage_json.as_deref())
     .bind(entry.upstream_request_id.as_deref())
     .bind(to_i64_u128(entry.latency_ms))
     .execute(pool)

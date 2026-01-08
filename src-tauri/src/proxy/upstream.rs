@@ -1,5 +1,8 @@
 use axum::{
-    http::{header::HeaderValue, HeaderMap, Method, StatusCode},
+    http::{
+        header::{HeaderName, HeaderValue},
+        HeaderMap, Method, StatusCode,
+    },
     response::Response,
 };
 use std::{
@@ -12,6 +15,8 @@ use std::{
 
 const ANTHROPIC_VERSION_HEADER: &str = "anthropic-version";
 const DEFAULT_ANTHROPIC_VERSION: &str = "2023-06-01";
+const GEMINI_API_KEY_QUERY: &str = "key";
+const GEMINI_API_KEY_HEADER: HeaderName = HeaderName::from_static("x-goog-api-key");
 
 use super::{
     config::{UpstreamRuntime, UpstreamStrategy},
@@ -190,14 +195,23 @@ async fn attempt_upstream(
     request_auth: &RequestAuth,
     response_transform: FormatTransform,
 ) -> AttemptOutcome {
-    let auth = match http::resolve_upstream_auth(provider, upstream, request_auth) {
-        Ok(Some(auth)) => auth,
-        Ok(None) => return AttemptOutcome::SkippedAuth,
-        Err(response) => return AttemptOutcome::Fatal(response),
-    };
     let upstream_url = upstream.upstream_url(upstream_path_with_query);
+    let (upstream_url, auth) = match provider {
+        "gemini" => match resolve_gemini_upstream(upstream, request_auth, upstream_path_with_query, &upstream_url) {
+            Ok(value) => value,
+            Err(outcome) => return outcome,
+        },
+        _ => {
+            let auth = match http::resolve_upstream_auth(provider, upstream, request_auth) {
+                Ok(Some(auth)) => auth,
+                Ok(None) => return AttemptOutcome::SkippedAuth,
+                Err(response) => return AttemptOutcome::Fatal(response),
+            };
+            (upstream_url, auth)
+        }
+    };
     let mut request_headers = http::build_upstream_headers(headers, auth);
-    if provider == "claude" && !request_headers.contains_key(ANTHROPIC_VERSION_HEADER) {
+    if provider == "anthropic" && !request_headers.contains_key(ANTHROPIC_VERSION_HEADER) {
         // Anthropic 官方 API 需要 `anthropic-version`；缺省时补一个稳定默认值，允许客户端覆盖。
         request_headers.insert(
             ANTHROPIC_VERSION_HEADER,
@@ -256,14 +270,120 @@ async fn attempt_upstream(
             AttemptOutcome::Success(response)
         }
         Err(err) if is_retryable_error(&err) => AttemptOutcome::Retryable {
-            message: err.to_string(),
+            message: sanitize_upstream_error(provider, &err),
             response: None,
         },
         Err(err) => AttemptOutcome::Fatal(http::error_response(
             StatusCode::BAD_GATEWAY,
-            format!("Upstream request failed: {err}"),
+            format!("Upstream request failed: {}", sanitize_upstream_error(provider, &err)),
         )),
     }
+}
+
+fn resolve_gemini_upstream(
+    upstream: &UpstreamRuntime,
+    request_auth: &RequestAuth,
+    upstream_path_with_query: &str,
+    upstream_url: &str,
+) -> Result<(String, http::UpstreamAuthHeader), AttemptOutcome> {
+    let query_key = extract_query_param(upstream_path_with_query, GEMINI_API_KEY_QUERY);
+    let selected = upstream
+        .api_key
+        .as_deref()
+        .or_else(|| request_auth.gemini_api_key.as_deref())
+        .or_else(|| query_key.as_deref());
+
+    let Some(api_key) = selected else {
+        return Err(AttemptOutcome::SkippedAuth);
+    };
+
+    let upstream_url = match ensure_query_param(upstream_url, GEMINI_API_KEY_QUERY, api_key) {
+        Ok(url) => url,
+        Err(message) => {
+            return Err(AttemptOutcome::Fatal(http::error_response(
+                StatusCode::BAD_GATEWAY,
+                format!("Failed to build upstream URL: {message}"),
+            )))
+        }
+    };
+
+    let value = HeaderValue::from_str(api_key).map_err(|_| {
+        AttemptOutcome::Fatal(http::error_response(
+            StatusCode::UNAUTHORIZED,
+            "Upstream API key contains invalid characters.",
+        ))
+    })?;
+
+    Ok((
+        upstream_url,
+        http::UpstreamAuthHeader {
+            name: GEMINI_API_KEY_HEADER.clone(),
+            value,
+        },
+    ))
+}
+
+fn extract_query_param(path_with_query: &str, name: &str) -> Option<String> {
+    let url = url::Url::parse(&format!("http://localhost{path_with_query}")).ok()?;
+    url.query_pairs()
+        .find(|(key, _)| key == name)
+        .map(|(_, value)| value.into_owned())
+}
+
+fn ensure_query_param(url: &str, name: &str, value: &str) -> Result<String, String> {
+    let mut parsed = url::Url::parse(url).map_err(|err| err.to_string())?;
+    let pairs: Vec<(String, String)> = parsed
+        .query_pairs()
+        .map(|(key, value)| (key.into_owned(), value.into_owned()))
+        .collect();
+
+    {
+        let mut writer = parsed.query_pairs_mut();
+        writer.clear();
+        for (key, existing) in pairs {
+            if key == name {
+                continue;
+            }
+            writer.append_pair(&key, &existing);
+        }
+        writer.append_pair(name, value);
+    }
+
+    Ok(parsed.to_string())
+}
+
+fn sanitize_upstream_error(provider: &str, err: &reqwest::Error) -> String {
+    let message = err.to_string();
+    if provider == "gemini" {
+        return redact_query_param_value(&message, GEMINI_API_KEY_QUERY);
+    }
+    message
+}
+
+fn redact_query_param_value(message: &str, name: &str) -> String {
+    let needle = format!("{name}=");
+    let mut output = String::with_capacity(message.len());
+    let mut rest = message;
+
+    while let Some(pos) = rest.find(&needle) {
+        let (before, after) = rest.split_at(pos);
+        output.push_str(before);
+        output.push_str(&needle);
+        output.push_str("***");
+
+        let after = &after[needle.len()..];
+        let mut end = after.len();
+        for (idx, ch) in after.char_indices() {
+            if matches!(ch, '&' | ')' | ' ' | '\n' | '\r' | '\t' | '"' | '\'') {
+                end = idx;
+                break;
+            }
+        }
+        rest = &after[end..];
+    }
+
+    output.push_str(rest);
+    output
 }
 
 fn resolve_group_start(
