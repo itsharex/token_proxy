@@ -12,6 +12,9 @@ dist
 dist-ssr
 *.local
 
+# Paraglide / inlang
+project.inlang/cache/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

@@ -4,6 +4,8 @@
   "common_close": "Close",
   "common_delete": "Delete",
   "common_discard": "Discard",
+  "common_show": "Show",
+  "common_hide": "Hide",
   "common_optional": "Optional",
   "common_enabled": "Enabled",
   "common_disabled": "Disabled",
@@ -181,4 +183,3 @@
   "error_upstream_priority_integer": "Upstream {id} priority must be an integer.",
   "error_upstream_index_integer": "Upstream {id} index must be an integer."
 }
-

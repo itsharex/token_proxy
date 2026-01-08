@@ -4,6 +4,8 @@
   "common_close": "关闭",
   "common_delete": "删除",
   "common_discard": "丢弃",
+  "common_show": "显示",
+  "common_hide": "隐藏",
   "common_optional": "可选",
   "common_enabled": "启用",
   "common_disabled": "禁用",
@@ -181,4 +183,3 @@
   "error_upstream_priority_integer": "上游 {id} 的 priority 必须是整数。",
   "error_upstream_index_integer": "上游 {id} 的 index 必须是整数。"
 }
-
