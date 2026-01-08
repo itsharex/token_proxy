@@ -13,6 +13,15 @@ fn default_enabled() -> bool {
     true
 }
 
+fn default_proxy_port() -> u16 {
+    // Dev 与安装包需要可并行运行；debug 默认换一个端口，避免与 release/安装包冲突。
+    if cfg!(debug_assertions) {
+        19208
+    } else {
+        9208
+    }
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum UpstreamStrategy {
@@ -58,7 +67,7 @@ impl Default for ProxyConfigFile {
     fn default() -> Self {
         Self {
             host: "127.0.0.1".to_string(),
-            port: 9208,
+            port: default_proxy_port(),
             local_api_key: None,
             log_path: "proxy.log".to_string(),
             enable_api_format_conversion: false,
