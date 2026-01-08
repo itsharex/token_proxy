@@ -12,6 +12,7 @@ import type {
   ProxyServiceStatus,
 } from "@/features/config/types";
 import { parseError } from "@/lib/error";
+import { useI18n } from "@/lib/i18n";
 import { m } from "@/paraglide/messages.js";
 
 type StatusState = "idle" | "loading" | "saving" | "saved" | "error";
@@ -137,7 +138,8 @@ function useProxyServiceActions({
 }
 
 function useConfigDerived(form: ConfigForm, lastConfig: ProxyConfigFile | null, status: StatusState) {
-  const validation = useMemo(() => validate(form), [form]);
+  const { locale } = useI18n();
+  const validation = useMemo(() => validate(form), [form, locale]);
   const currentPayload = useMemo(
     () => (validation.valid ? toPayload(form) : null),
     [form, validation.valid]

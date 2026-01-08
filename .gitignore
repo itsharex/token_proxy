@@ -14,6 +14,7 @@ dist-ssr
 
 # Paraglide / inlang
 project.inlang/cache/
+src/paraglide/
 
 # Editor directories and files
 .vscode/*
