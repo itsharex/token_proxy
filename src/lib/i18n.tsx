@@ -26,9 +26,8 @@ export function I18nProvider({ children }: I18nProviderProps) {
   const [locale, setLocaleState] = useState<Locale>(() => getLocale());
 
   const setAppLocale = useCallback((next: Locale) => {
-    setLocale(next, { reload: false });
-    syncDocumentLang(next);
-    setLocaleState(next);
+    // Paraglide 消息函数在编译时绑定，切换语言需刷新页面才能生效
+    setLocale(next, { reload: true });
   }, []);
 
   useEffect(() => {
