@@ -30,6 +30,14 @@ export type ConfigResponse = {
   config: ProxyConfigFile;
 };
 
+export type ProxyServiceState = "running" | "stopped";
+
+export type ProxyServiceStatus = {
+  state: ProxyServiceState;
+  addr: string | null;
+  last_error: string | null;
+};
+
 export type UpstreamForm = {
   id: string;
   provider: string;

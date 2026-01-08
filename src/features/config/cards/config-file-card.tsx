@@ -47,7 +47,7 @@ export function ConfigFileCard({
         <Separator />
         <div className="space-y-1 text-sm text-muted-foreground">
           <p>Use the toolbar to save changes back to the JSONC file.</p>
-          <p>Restart the proxy after saving to apply updates.</p>
+          <p>Saving triggers an automatic proxy reload (and safe restart if needed).</p>
         </div>
         {savedAt ? (
           <div className="text-xs text-muted-foreground">

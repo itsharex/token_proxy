@@ -20,12 +20,13 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   ConfigFileCard,
   ProxyCoreCard,
+  ProxyServiceCard,
   StrategyCard,
   UpstreamsCard,
   ValidationCard,
   type StatusBadge,
 } from "@/features/config/cards";
-import type { ConfigForm } from "@/features/config/types";
+import type { ConfigForm, ProxyServiceStatus } from "@/features/config/types";
 import { cn } from "@/lib/utils";
 
 type ConfigSectionId = "core" | "strategy" | "upstreams" | "file" | "validation";
@@ -176,6 +177,9 @@ type AppViewProps = {
   providerOptions: string[];
   configPath: string;
   savedAt: string;
+  proxyServiceStatus: ProxyServiceStatus | null;
+  proxyServiceRequestState: "idle" | "working" | "error";
+  proxyServiceMessage: string;
   status: "idle" | "loading" | "saving" | "saved" | "error";
   statusMessage: string;
   canSave: boolean;
@@ -191,6 +195,11 @@ type AppViewProps = {
   onSave: () => void;
   onReset: () => void;
   onReload: () => void;
+  onProxyServiceRefresh: () => void;
+  onProxyServiceStart: () => void;
+  onProxyServiceStop: () => void;
+  onProxyServiceRestart: () => void;
+  onProxyServiceReload: () => void;
 };
 
 type ConfigToolbarProps = {
@@ -303,12 +312,25 @@ export function AppView(props: AppViewProps) {
               />
             </TabsContent>
             <TabsContent value="file" className="mt-0">
-              <ConfigFileCard
-                configPath={props.configPath}
-                savedAt={props.savedAt}
-                isDirty={props.isDirty}
-                onReset={props.onReset}
-              />
+              <div className="space-y-6">
+                <ConfigFileCard
+                  configPath={props.configPath}
+                  savedAt={props.savedAt}
+                  isDirty={props.isDirty}
+                  onReset={props.onReset}
+                />
+                <ProxyServiceCard
+                  status={props.proxyServiceStatus}
+                  requestState={props.proxyServiceRequestState}
+                  message={props.proxyServiceMessage}
+                  isDirty={props.isDirty}
+                  onRefresh={props.onProxyServiceRefresh}
+                  onStart={props.onProxyServiceStart}
+                  onStop={props.onProxyServiceStop}
+                  onRestart={props.onProxyServiceRestart}
+                  onReload={props.onProxyServiceReload}
+                />
+              </div>
             </TabsContent>
             <TabsContent value="validation" className="mt-0">
               <ValidationCard form={props.form} validation={props.validation} />

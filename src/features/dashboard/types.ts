@@ -22,6 +22,7 @@ export type DashboardProviderStat = {
 };
 
 export type DashboardRequestItem = {
+  id: number;
   tsMs: number;
   path: string;
   provider: string;

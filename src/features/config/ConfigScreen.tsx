@@ -5,10 +5,16 @@ import { AppView } from "@/features/config/AppView";
 import { type StatusBadge } from "@/features/config/cards";
 import { EMPTY_FORM, toForm, toPayload, validate } from "@/features/config/form";
 import { useConfigListActions } from "@/features/config/list-actions";
-import type { ConfigForm, ConfigResponse, ProxyConfigFile } from "@/features/config/types";
+import type {
+  ConfigForm,
+  ConfigResponse,
+  ProxyConfigFile,
+  ProxyServiceStatus,
+} from "@/features/config/types";
 import { parseError } from "@/lib/error";
 
 type StatusState = "idle" | "loading" | "saving" | "saved" | "error";
+type ProxyServiceRequestState = "idle" | "working" | "error";
 
 function createStatusBadge(
   status: StatusState,
@@ -65,6 +71,70 @@ function useConfigState() {
   };
 }
 
+function useProxyServiceState() {
+  const [proxyServiceStatus, setProxyServiceStatus] = useState<ProxyServiceStatus | null>(null);
+  const [proxyServiceRequestState, setProxyServiceRequestState] =
+    useState<ProxyServiceRequestState>("idle");
+  const [proxyServiceMessage, setProxyServiceMessage] = useState("");
+
+  return {
+    proxyServiceStatus,
+    proxyServiceRequestState,
+    proxyServiceMessage,
+    setProxyServiceStatus,
+    setProxyServiceRequestState,
+    setProxyServiceMessage,
+  };
+}
+
+type ProxyServiceActionsArgs = {
+  setProxyServiceStatus: (value: ProxyServiceStatus) => void;
+  setProxyServiceRequestState: (value: ProxyServiceRequestState) => void;
+  setProxyServiceMessage: (value: string) => void;
+};
+
+function useProxyServiceActions({
+  setProxyServiceStatus,
+  setProxyServiceRequestState,
+  setProxyServiceMessage,
+}: ProxyServiceActionsArgs) {
+  const refreshProxyStatus = useCallback(async () => {
+    setProxyServiceRequestState("working");
+    setProxyServiceMessage("");
+    try {
+      const status = await invoke<ProxyServiceStatus>("proxy_status");
+      setProxyServiceStatus(status);
+      setProxyServiceRequestState("idle");
+    } catch (error) {
+      setProxyServiceRequestState("error");
+      setProxyServiceMessage(parseError(error));
+    }
+  }, [setProxyServiceMessage, setProxyServiceRequestState, setProxyServiceStatus]);
+
+  const runProxyCommand = useCallback(
+    async (command: "proxy_start" | "proxy_stop" | "proxy_restart" | "proxy_reload") => {
+      setProxyServiceRequestState("working");
+      setProxyServiceMessage("");
+      try {
+        const status = await invoke<ProxyServiceStatus>(command);
+        setProxyServiceStatus(status);
+        setProxyServiceRequestState("idle");
+      } catch (error) {
+        setProxyServiceRequestState("error");
+        setProxyServiceMessage(parseError(error));
+      }
+    },
+    [setProxyServiceMessage, setProxyServiceRequestState, setProxyServiceStatus]
+  );
+
+  const startProxy = useCallback(async () => runProxyCommand("proxy_start"), [runProxyCommand]);
+  const stopProxy = useCallback(async () => runProxyCommand("proxy_stop"), [runProxyCommand]);
+  const restartProxy = useCallback(async () => runProxyCommand("proxy_restart"), [runProxyCommand]);
+  const reloadProxy = useCallback(async () => runProxyCommand("proxy_reload"), [runProxyCommand]);
+
+  return { refreshProxyStatus, startProxy, stopProxy, restartProxy, reloadProxy };
+}
+
 function useConfigDerived(form: ConfigForm, lastConfig: ProxyConfigFile | null, status: StatusState) {
   const validation = useMemo(() => validate(form), [form]);
   const currentPayload = useMemo(
@@ -110,6 +180,8 @@ type ConfigActionsArgs = {
   setSavedAt: (value: string) => void;
   setStatus: (value: StatusState) => void;
   setStatusMessage: (value: string) => void;
+  setProxyServiceStatus: (value: ProxyServiceStatus) => void;
+  setProxyServiceMessage: (value: string) => void;
 };
 
 function useConfigActions({
@@ -122,6 +194,8 @@ function useConfigActions({
   setSavedAt,
   setStatus,
   setStatusMessage,
+  setProxyServiceStatus,
+  setProxyServiceMessage,
 }: ConfigActionsArgs) {
   const loadConfig = useCallback(async () => {
     setStatus("loading");
@@ -146,16 +220,28 @@ function useConfigActions({
     }
     setStatus("saving");
     setStatusMessage("");
+    setProxyServiceMessage("");
     try {
-      await invoke("write_proxy_config", { config: currentPayload });
+      const status = await invoke<ProxyServiceStatus>("write_proxy_config", { config: currentPayload });
+      setProxyServiceStatus(status);
       setLastConfig(currentPayload);
       setSavedAt(new Date().toLocaleString());
       setStatus("saved");
     } catch (error) {
       setStatus("error");
       setStatusMessage(parseError(error));
+      setProxyServiceMessage(parseError(error));
     }
-  }, [currentPayload, setLastConfig, setSavedAt, setStatus, setStatusMessage, validation.message]);
+  }, [
+    currentPayload,
+    setLastConfig,
+    setProxyServiceMessage,
+    setProxyServiceStatus,
+    setSavedAt,
+    setStatus,
+    setStatusMessage,
+    validation.message,
+  ]);
 
   const resetForm = useCallback(() => {
     if (!lastConfig) {
@@ -171,6 +257,13 @@ function useConfigActions({
 export function ConfigScreen() {
   const state = useConfigState();
   const derived = useConfigDerived(state.form, state.lastConfig, state.status);
+  const proxyService = useProxyServiceState();
+  const { refreshProxyStatus, startProxy, stopProxy, restartProxy, reloadProxy } =
+    useProxyServiceActions({
+      setProxyServiceStatus: proxyService.setProxyServiceStatus,
+      setProxyServiceRequestState: proxyService.setProxyServiceRequestState,
+      setProxyServiceMessage: proxyService.setProxyServiceMessage,
+    });
   const { loadConfig, saveConfig, resetForm } = useConfigActions({
     currentPayload: derived.currentPayload,
     lastConfig: state.lastConfig,
@@ -181,12 +274,18 @@ export function ConfigScreen() {
     setSavedAt: state.setSavedAt,
     setStatus: state.setStatus,
     setStatusMessage: state.setStatusMessage,
+    setProxyServiceStatus: proxyService.setProxyServiceStatus,
+    setProxyServiceMessage: proxyService.setProxyServiceMessage,
   });
   const listActions = useConfigListActions(state.setForm);
 
   useEffect(() => {
     void loadConfig();
   }, [loadConfig]);
+
+  useEffect(() => {
+    void refreshProxyStatus();
+  }, [refreshProxyStatus]);
 
   return (
     <AppView
@@ -197,6 +296,9 @@ export function ConfigScreen() {
       providerOptions={derived.providerOptions}
       configPath={state.configPath}
       savedAt={state.savedAt}
+      proxyServiceStatus={proxyService.proxyServiceStatus}
+      proxyServiceRequestState={proxyService.proxyServiceRequestState}
+      proxyServiceMessage={proxyService.proxyServiceMessage}
       status={state.status}
       statusMessage={state.statusMessage}
       canSave={derived.canSave}
@@ -212,7 +314,11 @@ export function ConfigScreen() {
       onSave={saveConfig}
       onReset={resetForm}
       onReload={loadConfig}
+      onProxyServiceRefresh={refreshProxyStatus}
+      onProxyServiceStart={startProxy}
+      onProxyServiceStop={stopProxy}
+      onProxyServiceRestart={restartProxy}
+      onProxyServiceReload={reloadProxy}
     />
   );
 }
-

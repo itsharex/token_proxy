@@ -5,7 +5,14 @@ import { AlertCircle, RefreshCcw } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Card,
+  CardAction,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Select,
@@ -15,12 +22,15 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { readDashboardSnapshot } from "@/features/dashboard/api";
+import { RecentRequestsTable } from "@/features/dashboard/RecentRequestsTable";
+import { formatInteger } from "@/features/dashboard/format";
 import type { DashboardRange, DashboardSnapshot } from "@/features/dashboard/types";
 import { parseError } from "@/lib/error";
 import { cn } from "@/lib/utils";
 
-const NUMBER_FORMAT = new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 });
 const PERCENT_FORMAT = new Intl.NumberFormat(undefined, { style: "percent", maximumFractionDigits: 1 });
+
+const RECENT_PAGE_SIZE = 50;
 
 const RANGE_PRESETS = [
   { value: "1h", label: "最近 1 小时" },
@@ -54,21 +64,6 @@ function resolveRange(preset: RangePreset): DashboardRange {
   return { fromTsMs: now - ms, toTsMs: now };
 }
 
-type BadgeVariant = "default" | "secondary" | "destructive" | "outline";
-
-function statusToVariant(status: number): BadgeVariant {
-  if (status >= 200 && status < 300) {
-    return "default";
-  }
-  if (status >= 400) {
-    return "destructive";
-  }
-  if (status >= 300) {
-    return "secondary";
-  }
-  return "outline";
-}
-
 type StatCardProps = {
   title: string;
   value: string;
@@ -91,6 +86,7 @@ function StatCard({ title, value, hint }: StatCardProps) {
 
 export function DashboardScreen() {
   const [preset, setPreset] = useState<RangePreset>("24h");
+  const [page, setPage] = useState(1);
   const [snapshot, setSnapshot] = useState<DashboardSnapshot | null>(null);
   const [status, setStatus] = useState<"idle" | "loading" | "error">("idle");
   const [statusMessage, setStatusMessage] = useState("");
@@ -100,14 +96,15 @@ export function DashboardScreen() {
     setStatusMessage("");
     try {
       const range = resolveRange(preset);
-      const data = await readDashboardSnapshot(range, 100);
+      const offset = (page - 1) * RECENT_PAGE_SIZE;
+      const data = await readDashboardSnapshot(range, offset);
       setSnapshot(data);
       setStatus("idle");
     } catch (error) {
       setStatus("error");
       setStatusMessage(parseError(error));
     }
-  }, [preset]);
+  }, [page, preset]);
 
   useEffect(() => {
     void loadSnapshot();
@@ -126,6 +123,26 @@ export function DashboardScreen() {
       .slice(0, 10);
     return { errorRate, successRate, providers };
   }, [snapshot]);
+
+  const pagination = useMemo(() => {
+    const totalRequests = snapshot?.summary.totalRequests ?? 0;
+    const totalPages = Math.max(1, Math.ceil(totalRequests / RECENT_PAGE_SIZE));
+    const safePage = Math.min(Math.max(1, page), totalPages);
+
+    return {
+      totalRequests,
+      totalPages,
+      page: safePage,
+      canPrev: safePage > 1,
+      canNext: safePage < totalPages,
+    };
+  }, [page, snapshot?.summary.totalRequests]);
+
+  useEffect(() => {
+    if (page !== pagination.page) {
+      setPage(pagination.page);
+    }
+  }, [page, pagination.page]);
 
   return (
     <section data-slot="dashboard-screen" className="h-full min-h-0">
@@ -148,6 +165,7 @@ export function DashboardScreen() {
                   const next = toRangePreset(value);
                   if (next) {
                     setPreset(next);
+                    setPage(1);
                   }
                 }}
               >
@@ -182,26 +200,26 @@ export function DashboardScreen() {
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
             <StatCard
               title="请求数"
-              value={NUMBER_FORMAT.format(snapshot?.summary.totalRequests ?? 0)}
+              value={formatInteger(snapshot?.summary.totalRequests ?? 0)}
               hint={derived ? `成功率 ${PERCENT_FORMAT.format(derived.successRate)}` : "—"}
             />
             <StatCard
               title="错误数"
-              value={NUMBER_FORMAT.format(snapshot?.summary.errorRequests ?? 0)}
+              value={formatInteger(snapshot?.summary.errorRequests ?? 0)}
               hint={derived ? `错误率 ${PERCENT_FORMAT.format(derived.errorRate)}` : "—"}
             />
             <StatCard
               title="总 Tokens"
-              value={NUMBER_FORMAT.format(snapshot?.summary.totalTokens ?? 0)}
-              hint={`输入 ${NUMBER_FORMAT.format(snapshot?.summary.inputTokens ?? 0)}${
+              value={formatInteger(snapshot?.summary.totalTokens ?? 0)}
+              hint={`输入 ${formatInteger(snapshot?.summary.inputTokens ?? 0)}${
                 snapshot?.summary.cachedTokens
-                  ? `（cached ${NUMBER_FORMAT.format(snapshot?.summary.cachedTokens ?? 0)}）`
+                  ? `（cached ${formatInteger(snapshot?.summary.cachedTokens ?? 0)}）`
                   : ""
-              } · 输出 ${NUMBER_FORMAT.format(snapshot?.summary.outputTokens ?? 0)}`}
+              } · 输出 ${formatInteger(snapshot?.summary.outputTokens ?? 0)}`}
             />
             <StatCard
-              title="平均延迟"
-              value={`${NUMBER_FORMAT.format(snapshot?.summary.avgLatencyMs ?? 0)} ms`}
+              title="延迟 (ms)"
+              value={formatInteger(snapshot?.summary.avgLatencyMs ?? 0)}
               hint="按请求均值"
             />
           </div>
@@ -223,16 +241,16 @@ export function DashboardScreen() {
                         <div className="min-w-0">
                           <p className="truncate text-sm font-medium text-foreground">{stat.provider}</p>
                           <p className="truncate text-xs text-muted-foreground">
-                            {NUMBER_FORMAT.format(stat.requests)} requests
+                            {formatInteger(stat.requests)} requests
                           </p>
                         </div>
                         <div className="flex items-center gap-2">
                           <Badge variant="outline" className="border-border/60">
-                            {NUMBER_FORMAT.format(stat.totalTokens)} tokens
+                            {formatInteger(stat.totalTokens)}
                           </Badge>
                           {stat.cachedTokens ? (
                             <Badge variant="secondary" className="border border-border/60">
-                              {NUMBER_FORMAT.format(stat.cachedTokens)} cached
+                              {formatInteger(stat.cachedTokens)} cached
                             </Badge>
                           ) : null}
                         </div>
@@ -248,65 +266,42 @@ export function DashboardScreen() {
             <Card data-slot="dashboard-recent">
               <CardHeader>
                 <CardTitle className="text-base">Recent Requests</CardTitle>
-                <CardDescription>最近 100 条（按时间倒序）</CardDescription>
-              </CardHeader>
-              <CardContent className="pt-0">
-                {snapshot?.recent.length ? (
-                  <div className="overflow-hidden rounded-lg border border-border/60">
-                    <table className="w-full text-sm">
-                      <thead className="bg-muted/50 text-xs text-muted-foreground">
-                        <tr>
-                          <th className="px-3 py-2 text-left font-medium">时间</th>
-                          <th className="px-3 py-2 text-left font-medium">路径</th>
-                          <th className="px-3 py-2 text-left font-medium">Provider</th>
-                          <th className="px-3 py-2 text-left font-medium">状态</th>
-                          <th className="px-3 py-2 text-right font-medium">Tokens</th>
-                          <th className="px-3 py-2 text-right font-medium">延迟</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {snapshot.recent.map((item) => (
-                          <tr
-                            key={`${item.tsMs}-${item.upstreamRequestId ?? item.upstreamId}`}
-                            className="border-t border-border/60 bg-background/70 hover:bg-accent/30"
-                          >
-                            <td className="whitespace-nowrap px-3 py-2 text-xs text-muted-foreground">
-                              {new Date(item.tsMs).toLocaleString()}
-                            </td>
-                            <td className="max-w-[220px] truncate px-3 py-2">
-                              <span className="font-medium text-foreground">{item.path}</span>
-                            </td>
-                            <td className="max-w-[160px] truncate px-3 py-2 text-xs text-muted-foreground">
-                              {item.provider}
-                              <span className="text-muted-foreground/70"> · {item.upstreamId}</span>
-                            </td>
-                            <td className="px-3 py-2">
-                              <Badge variant={statusToVariant(item.status)}>{item.status}</Badge>
-                            </td>
-                            <td className="px-3 py-2 text-right font-medium text-foreground">
-                              <div className="flex flex-col items-end gap-0.5">
-                                <span>
-                                  {item.totalTokens === null ? "—" : NUMBER_FORMAT.format(item.totalTokens)}
-                                </span>
-                                {item.cachedTokens ? (
-                                  <span className="text-xs font-normal text-muted-foreground">
-                                    cached {NUMBER_FORMAT.format(item.cachedTokens)}
-                                  </span>
-                                ) : null}
-                              </div>
-                            </td>
-                            <td className="px-3 py-2 text-right text-xs text-muted-foreground">
-                              {NUMBER_FORMAT.format(item.latencyMs)} ms
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                <CardDescription>
+                  按时间倒序 · 每页 {RECENT_PAGE_SIZE} 条 · 共 {formatInteger(pagination.totalRequests)} 条
+                </CardDescription>
+                <CardAction className="flex flex-col items-end gap-2">
+                  <div className="flex items-center gap-2">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      disabled={!pagination.canPrev || status === "loading"}
+                      onClick={() => setPage((current) => Math.max(1, current - 1))}
+                    >
+                      上一页
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      disabled={!pagination.canNext || status === "loading"}
+                      onClick={() => setPage((current) => Math.min(pagination.totalPages, current + 1))}
+                    >
+                      下一页
+                    </Button>
                   </div>
-                ) : (
-                  <p className="text-sm text-muted-foreground">暂无数据</p>
-                )}
-              </CardContent>
+                  <p className="text-xs text-muted-foreground">
+                    第 {pagination.page} / {pagination.totalPages} 页
+                  </p>
+                </CardAction>
+              </CardHeader>
+	              <CardContent className="pt-0">
+	                {snapshot?.recent.length ? (
+	                  <RecentRequestsTable items={snapshot.recent} scrollKey={`${preset}-${pagination.page}`} />
+	                ) : (
+	                  <p className="text-sm text-muted-foreground">暂无数据</p>
+	                )}
+	              </CardContent>
             </Card>
           </div>
         </div>

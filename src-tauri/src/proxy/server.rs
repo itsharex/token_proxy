@@ -11,10 +11,8 @@ use std::{
     collections::HashMap,
     sync::{atomic::AtomicUsize, Arc},
 };
-use tokio::net::TcpListener;
+use tokio::sync::RwLock;
 
-use super::log::LogWriter;
-use super::sqlite;
 use super::{
     config::ProxyConfig,
     http,
@@ -36,6 +34,8 @@ const GEMINI_GENERATE_SUFFIX: &str = ":generateContent";
 const GEMINI_STREAM_SUFFIX: &str = ":streamGenerateContent";
 const REQUEST_META_LIMIT_BYTES: usize = 2 * 1024 * 1024;
 const REQUEST_TRANSFORM_LIMIT_BYTES: usize = 4 * 1024 * 1024;
+
+type ProxyStateHandle = Arc<RwLock<Arc<ProxyState>>>;
 
 struct DispatchPlan {
     provider: &'static str,
@@ -169,7 +169,7 @@ fn resolve_dispatch_plan(config: &ProxyConfig, path: &str) -> Result<DispatchPla
     ))
 }
 
-fn build_upstream_cursors(config: &ProxyConfig) -> HashMap<String, Vec<AtomicUsize>> {
+pub(crate) fn build_upstream_cursors(config: &ProxyConfig) -> HashMap<String, Vec<AtomicUsize>> {
     let mut cursors = HashMap::new();
     for (provider, upstreams) in &config.upstreams {
         let group_cursors = upstreams
@@ -182,54 +182,22 @@ fn build_upstream_cursors(config: &ProxyConfig) -> HashMap<String, Vec<AtomicUsi
     cursors
 }
 
-pub(crate) fn spawn(app: tauri::AppHandle) {
-    tauri::async_runtime::spawn(async move {
-        if let Err(err) = run_proxy(app).await {
-            eprintln!("proxy server failed: {err}");
-        }
-    });
-}
-
-async fn run_proxy(app: tauri::AppHandle) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let config = ProxyConfig::load(&app)
-        .await
-        .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err))?;
-    let addr = config.addr();
-    let sqlite_pool = match sqlite::open_pool(&app).await {
-        Ok(pool) => Some(pool),
-        Err(err) => {
-            eprintln!("sqlite init failed: {err}");
-            None
-        }
-    };
-    let log = Arc::new(LogWriter::new(&config.log_path, sqlite_pool).await?);
-    let client = reqwest::Client::new();
-    let cursors = build_upstream_cursors(&config);
-    let state = Arc::new(ProxyState {
-        config,
-        client,
-        log,
-        cursors,
-    });
-
-    let app = Router::new()
+pub(crate) fn build_router(state: ProxyStateHandle) -> Router<ProxyStateHandle> {
+    Router::new()
         .route("/*path", any(proxy_request))
         .layer(DefaultBodyLimit::disable())
-        .with_state(state);
-
-    let listener = TcpListener::bind(&addr).await?;
-    println!("proxy listening on http://{addr}");
-    axum::serve(listener, app).await?;
-    Ok(())
+        .with_state(state)
 }
 
 async fn proxy_request(
-    State(state): State<Arc<ProxyState>>,
+    State(state): State<ProxyStateHandle>,
     method: Method,
     uri: Uri,
     headers: HeaderMap,
     body: Body,
 ) -> Response {
+    // 只在此处短暂持有读锁，避免影响并发请求性能。
+    let state = { state.read().await.clone() };
     let path = uri.path();
     tracing::info!(method = %method, path = %path, "incoming request");
     tracing::debug!(headers = ?headers.keys().collect::<Vec<_>>(), "request headers");

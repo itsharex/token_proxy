@@ -4,8 +4,7 @@ use tauri::AppHandle;
 
 use super::sqlite;
 
-const DEFAULT_RECENT_LIMIT: u32 = 100;
-const MAX_RECENT_LIMIT: u32 = 500;
+const RECENT_PAGE_SIZE: u32 = 50;
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -39,6 +38,7 @@ pub(crate) struct DashboardProviderStat {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct DashboardRequestItem {
+    pub(crate) id: u64,
     pub(crate) ts_ms: u64,
     pub(crate) path: String,
     pub(crate) provider: String,
@@ -65,9 +65,9 @@ pub(crate) struct DashboardSnapshot {
 pub(crate) async fn read_snapshot(
     app: AppHandle,
     range: DashboardRange,
-    limit: Option<u32>,
+    offset: Option<u32>,
 ) -> Result<DashboardSnapshot, String> {
-    let limit = limit.unwrap_or(DEFAULT_RECENT_LIMIT).min(MAX_RECENT_LIMIT);
+    let offset = offset.unwrap_or(0);
 
     let pool = sqlite::open_pool(&app).await?;
     let from_ts_ms = range.from_ts_ms.map(|value| value as i64);
@@ -153,6 +153,7 @@ ORDER BY total_tokens DESC;
     let recent = sqlx::query(
         r#"
 SELECT
+  id,
   ts_ms,
   path,
   provider,
@@ -171,17 +172,19 @@ SELECT
 FROM request_logs
 WHERE (?1 IS NULL OR ts_ms >= ?1) AND (?2 IS NULL OR ts_ms <= ?2)
 ORDER BY ts_ms DESC
-LIMIT ?3;
+LIMIT ?3 OFFSET ?4;
 "#,
     )
     .bind(from_ts_ms)
     .bind(to_ts_ms)
-    .bind(i64::from(limit))
+    .bind(i64::from(RECENT_PAGE_SIZE))
+    .bind(i64::from(offset))
     .fetch_all(&pool)
     .await
     .map_err(|err| format!("Failed to query recent requests: {err}"))?
     .into_iter()
     .filter_map(|row| {
+        let id: i64 = row.try_get("id").ok()?;
         let ts_ms: i64 = row.try_get("ts_ms").ok()?;
         let path: String = row.try_get("path").ok()?;
         let provider: String = row.try_get("provider").ok()?;
@@ -194,6 +197,7 @@ LIMIT ?3;
         let latency_ms: i64 = row.try_get("latency_ms").unwrap_or(0);
         let upstream_request_id: Option<String> = row.try_get("upstream_request_id").ok()?;
         Some(DashboardRequestItem {
+            id: i64_to_u64(id),
             ts_ms: i64_to_u64(ts_ms),
             path,
             provider,

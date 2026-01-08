@@ -1,5 +1,6 @@
 pub(crate) mod config;
 pub(crate) mod dashboard;
+pub(crate) mod service;
 mod http;
 mod log;
 mod openai_compat;
@@ -10,8 +11,6 @@ mod sse;
 mod sqlite;
 mod upstream;
 mod usage;
-
-pub(crate) use server::spawn;
 
 use std::{
     collections::HashMap,
