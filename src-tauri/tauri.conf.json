@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "token proxy",
+  "productName": "Token Proxy",
   "version": "0.1.0",
   "identifier": "com.mxyhi.token-proxy",
   "build": {
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "token proxy",
+        "title": "Token Proxy",
         "width": 1064,
         "height": 658
       }
