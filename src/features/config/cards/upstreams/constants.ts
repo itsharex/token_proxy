@@ -56,7 +56,7 @@ export function createDefaultColumnVisibility() {
   return visibility;
 }
 
-const DEFAULT_PROVIDER_OPTIONS = ["openai", "openai-response"] as const;
+const DEFAULT_PROVIDER_OPTIONS = ["openai", "openai-response", "claude"] as const;
 
 export function mergeProviderOptions(values: readonly string[]) {
   const seen = new Set<string>();
@@ -87,4 +87,3 @@ export function toStatusLabel(enabled: boolean) {
 export function getUpstreamLabel(index: number) {
   return `Upstream ${index + 1}`;
 }
-
