@@ -1,5 +1,6 @@
 {
   "name": "token_proxy",
+  "description": "Local AI API proxy for OpenAI/Gemini/Claude with token usage tracking, load balancing, and priority routing.",
   "private": true,
   "version": "0.1.0",
   "type": "module",
