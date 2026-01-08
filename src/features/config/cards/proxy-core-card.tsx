@@ -1,3 +1,6 @@
+import { ToggleLeft, ToggleRight } from "lucide-react";
+
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -65,6 +68,38 @@ export function ProxyCoreCard({
             onChange={(event) => onChange({ logPath: event.target.value })}
             placeholder="proxy.log"
           />
+        </div>
+        <div className="rounded-md border border-border/60 bg-background/60 p-3">
+          <div className="flex items-start justify-between gap-4">
+            <div className="space-y-1">
+              <p className="text-sm font-medium text-foreground">OpenAI Format Conversion</p>
+              <p className="text-xs text-muted-foreground">
+                Translate between <code>/v1/chat/completions</code> and <code>/v1/responses</code>{" "}
+                when the preferred provider is missing.
+              </p>
+            </div>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              onClick={() =>
+                onChange({ enableApiFormatConversion: !form.enableApiFormatConversion })
+              }
+              aria-label={
+                form.enableApiFormatConversion
+                  ? "Disable OpenAI format conversion"
+                  : "Enable OpenAI format conversion"
+              }
+              aria-pressed={form.enableApiFormatConversion}
+            >
+              {form.enableApiFormatConversion ? (
+                <ToggleRight className="size-5" aria-hidden="true" />
+              ) : (
+                <ToggleLeft className="size-5" aria-hidden="true" />
+              )}
+            </Button>
+          </div>
+          <p className="mt-2 text-xs text-muted-foreground">Default: disabled.</p>
         </div>
       </CardContent>
     </Card>

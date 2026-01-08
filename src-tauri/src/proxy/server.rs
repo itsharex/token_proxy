@@ -44,6 +44,7 @@ fn resolve_dispatch_plan(config: &ProxyConfig, path: &str) -> Result<DispatchPla
     let has_chat = config.provider_upstreams(PROVIDER_CHAT).is_some();
     let has_responses = config.provider_upstreams(PROVIDER_RESPONSES).is_some();
     let has_claude = config.provider_upstreams(PROVIDER_CLAUDE).is_some();
+    let allow_format_conversion = config.enable_api_format_conversion;
 
     if is_claude_path(path) {
         if has_claude {
@@ -102,6 +103,12 @@ fn resolve_dispatch_plan(config: &ProxyConfig, path: &str) -> Result<DispatchPla
                 });
             }
             if has_responses {
+                if !allow_format_conversion {
+                    return Err(http::error_response(
+                        StatusCode::BAD_GATEWAY,
+                        "OpenAI format conversion is disabled (enable_api_format_conversion=false). Configure provider \"openai\" for /v1/chat/completions or enable conversion.",
+                    ));
+                }
                 return Ok(DispatchPlan {
                     provider: PROVIDER_RESPONSES,
                     outbound_path: Some(RESPONSES_PATH),
@@ -120,6 +127,12 @@ fn resolve_dispatch_plan(config: &ProxyConfig, path: &str) -> Result<DispatchPla
                 });
             }
             if has_chat {
+                if !allow_format_conversion {
+                    return Err(http::error_response(
+                        StatusCode::BAD_GATEWAY,
+                        "OpenAI format conversion is disabled (enable_api_format_conversion=false). Configure provider \"openai-response\" for /v1/responses or enable conversion.",
+                    ));
+                }
                 return Ok(DispatchPlan {
                     provider: PROVIDER_CHAT,
                     outbound_path: Some(CHAT_PATH),
@@ -335,4 +348,61 @@ async fn maybe_transform_request_body(
     let outbound_bytes = transform_request_body(transform, &bytes)
         .map_err(|message| http::error_response(StatusCode::BAD_REQUEST, message))?;
     Ok(ReplayableBody::from_bytes(outbound_bytes))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use std::{collections::HashMap, path::PathBuf};
+
+    use crate::proxy::config::{ProviderUpstreams, ProxyConfig, UpstreamStrategy};
+
+    fn config_with_providers(providers: &[&'static str], enable_api_format_conversion: bool) -> ProxyConfig {
+        let mut upstreams = HashMap::new();
+        for provider in providers {
+            upstreams.insert((*provider).to_string(), ProviderUpstreams { groups: Vec::new() });
+        }
+        ProxyConfig {
+            host: "127.0.0.1".to_string(),
+            port: 9208,
+            local_api_key: None,
+            log_path: PathBuf::from("proxy.log"),
+            enable_api_format_conversion,
+            upstream_strategy: UpstreamStrategy::PriorityRoundRobin,
+            upstreams,
+        }
+    }
+
+    #[test]
+    fn chat_fallback_requires_format_conversion_enabled() {
+        let config = config_with_providers(&[PROVIDER_RESPONSES], false);
+        let response = resolve_dispatch_plan(&config, CHAT_PATH)
+            .err()
+            .expect("should reject");
+        assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+
+        let config = config_with_providers(&[PROVIDER_RESPONSES], true);
+        let plan = resolve_dispatch_plan(&config, CHAT_PATH).expect("should fallback");
+        assert_eq!(plan.provider, PROVIDER_RESPONSES);
+        assert_eq!(plan.outbound_path, Some(RESPONSES_PATH));
+        assert_eq!(plan.request_transform, FormatTransform::ChatToResponses);
+        assert_eq!(plan.response_transform, FormatTransform::ResponsesToChat);
+    }
+
+    #[test]
+    fn responses_fallback_requires_format_conversion_enabled() {
+        let config = config_with_providers(&[PROVIDER_CHAT], false);
+        let response = resolve_dispatch_plan(&config, RESPONSES_PATH)
+            .err()
+            .expect("should reject");
+        assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+
+        let config = config_with_providers(&[PROVIDER_CHAT], true);
+        let plan = resolve_dispatch_plan(&config, RESPONSES_PATH).expect("should fallback");
+        assert_eq!(plan.provider, PROVIDER_CHAT);
+        assert_eq!(plan.outbound_path, Some(CHAT_PATH));
+        assert_eq!(plan.request_transform, FormatTransform::ResponsesToChat);
+        assert_eq!(plan.response_transform, FormatTransform::ChatToResponses);
+    }
 }

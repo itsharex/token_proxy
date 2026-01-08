@@ -44,6 +44,10 @@ pub(crate) struct ProxyConfigFile {
     pub(crate) port: u16,
     pub(crate) local_api_key: Option<String>,
     pub(crate) log_path: String,
+    /// 是否允许在 OpenAI Chat Completions 与 Responses API 之间自动互转。
+    /// 默认为关闭；关闭时将严格按 provider 路由，不做格式转换。
+    #[serde(default)]
+    pub(crate) enable_api_format_conversion: bool,
     #[serde(default)]
     pub(crate) upstream_strategy: UpstreamStrategy,
     #[serde(default)]
@@ -57,6 +61,7 @@ impl Default for ProxyConfigFile {
             port: 9208,
             local_api_key: None,
             log_path: "proxy.log".to_string(),
+            enable_api_format_conversion: false,
             upstream_strategy: UpstreamStrategy::PriorityRoundRobin,
             upstreams: vec![
                 UpstreamConfig {
@@ -97,6 +102,7 @@ pub(crate) struct ProxyConfig {
     pub(crate) port: u16,
     pub(crate) local_api_key: Option<String>,
     pub(crate) log_path: PathBuf,
+    pub(crate) enable_api_format_conversion: bool,
     pub(crate) upstream_strategy: UpstreamStrategy,
     pub(crate) upstreams: HashMap<String, ProviderUpstreams>,
 }
@@ -170,6 +176,7 @@ fn build_runtime_config(app: &AppHandle, config: ProxyConfigFile) -> Result<Prox
         port: config.port,
         local_api_key: config.local_api_key,
         log_path,
+        enable_api_format_conversion: config.enable_api_format_conversion,
         upstream_strategy: config.upstream_strategy,
         upstreams,
     })

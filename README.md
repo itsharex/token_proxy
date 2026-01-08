@@ -18,6 +18,7 @@ Example:
   "port": 9208,
   "local_api_key": null,
   "log_path": "proxy.log",
+  "enable_api_format_conversion": false,
   "upstream_strategy": "priority_round_robin",
   "upstreams": [
     {
@@ -52,7 +53,7 @@ Example:
 ```
 
 Notes:
-- Request routing is built in: `/v1/chat/completions` → `openai`, `/v1/responses` → `openai-response`, `/v1/messages` (and subpaths) / `/v1/complete` → `claude`. When the preferred OpenAI provider is missing, the proxy will translate between Chat Completions and Responses formats automatically (Claude is pass-through, no format conversion).
+- Request routing is built in: `/v1/chat/completions` → `openai`, `/v1/responses` → `openai-response`, `/v1/messages` (and subpaths) / `/v1/complete` → `claude`. OpenAI Chat/Responses conversion is controlled by `enable_api_format_conversion` (default: `false`). Claude is pass-through (no format conversion).
 - Claude auth uses `x-api-key`. If `anthropic-version` is missing, the proxy injects `2023-06-01` (override by providing the header explicitly).
 - `priority` sorts descending; `index` sorts ascending inside the same priority group.
 - Missing `index` values are auto-assigned globally after the current max index when saving.

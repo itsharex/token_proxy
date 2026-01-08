@@ -20,6 +20,7 @@ export type ProxyConfigFile = {
   port: number;
   local_api_key: string | null;
   log_path: string;
+  enable_api_format_conversion: boolean;
   upstream_strategy: UpstreamStrategy;
   upstreams: UpstreamConfig[];
 };
@@ -44,6 +45,7 @@ export type ConfigForm = {
   port: string;
   localApiKey: string;
   logPath: string;
+  enableApiFormatConversion: boolean;
   upstreamStrategy: UpstreamStrategy;
   upstreams: UpstreamForm[];
 };

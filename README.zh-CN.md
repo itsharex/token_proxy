@@ -18,6 +18,7 @@
   "port": 9208,
   "local_api_key": null,
   "log_path": "proxy.log",
+  "enable_api_format_conversion": false,
   "upstream_strategy": "priority_round_robin",
   "upstreams": [
     {
@@ -52,7 +53,7 @@
 ```
 
 说明：
-- 路由规则内置：`/v1/chat/completions` → `openai`，`/v1/responses` → `openai-response`，`/v1/messages`（及子路径）/`/v1/complete` → `claude`；当缺少对应 provider 时，代理会自动在 Chat Completions 与 Responses 格式之间互转（Claude 不做格式转换）。
+- 路由规则内置：`/v1/chat/completions` → `openai`，`/v1/responses` → `openai-response`，`/v1/messages`（及子路径）/`/v1/complete` → `claude`；OpenAI Chat/Responses 互转由 `enable_api_format_conversion` 控制（默认：`false`）。Claude 不做格式转换。
 - Claude 鉴权使用 `x-api-key`；当请求未携带 `anthropic-version` 时，代理默认补 `2023-06-01`（可被请求头覆盖）。
 - `priority` 越大优先级越高；同优先级内按 `index` 升序。
 - `index` 缺失时，保存配置会在当前最大 `index` 之后按顺序全局自动补齐。

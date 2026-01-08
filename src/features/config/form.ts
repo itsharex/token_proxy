@@ -42,6 +42,7 @@ export const EMPTY_FORM: ConfigForm = {
   port: "9208",
   localApiKey: "",
   logPath: "proxy.log",
+  enableApiFormatConversion: false,
   upstreamStrategy: UPSTREAM_STRATEGIES[0].value,
   upstreams: DEFAULT_UPSTREAMS.map((upstream) => ({ ...upstream })),
 };
@@ -64,6 +65,7 @@ export function toForm(config: ProxyConfigFile): ConfigForm {
     port: String(config.port),
     localApiKey: config.local_api_key ?? "",
     logPath: config.log_path,
+    enableApiFormatConversion: config.enable_api_format_conversion,
     upstreamStrategy: config.upstream_strategy,
     upstreams: config.upstreams.map((upstream) => ({
       id: upstream.id,
@@ -84,6 +86,7 @@ export function toPayload(form: ConfigForm): ProxyConfigFile {
     port,
     local_api_key: form.localApiKey.trim() ? form.localApiKey.trim() : null,
     log_path: form.logPath.trim(),
+    enable_api_format_conversion: form.enableApiFormatConversion,
     upstream_strategy: form.upstreamStrategy,
     upstreams: form.upstreams.map((upstream) => ({
       id: upstream.id.trim(),
