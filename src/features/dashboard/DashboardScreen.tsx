@@ -126,10 +126,8 @@ export function DashboardScreen({ variant = "standalone", headerLeading }: Dashb
     const totalRequests = snapshot.summary.totalRequests;
     const errorRate = totalRequests > 0 ? snapshot.summary.errorRequests / totalRequests : 0;
     const successRate = totalRequests > 0 ? snapshot.summary.successRequests / totalRequests : 0;
-    const providers = snapshot.providers
-      .slice()
-      .sort((a, b) => b.totalTokens - a.totalTokens)
-      .slice(0, 10);
+    // Optimize: slice first, then sort (avoid unnecessary full copy + sort)
+    const providers = snapshot.providers.slice(0, 10);
     return { errorRate, successRate, providers };
   }, [snapshot]);
 
@@ -146,12 +144,6 @@ export function DashboardScreen({ variant = "standalone", headerLeading }: Dashb
       canNext: safePage < totalPages,
     };
   }, [page, snapshot?.summary.totalRequests]);
-
-  useEffect(() => {
-    if (page !== pagination.page) {
-      setPage(pagination.page);
-    }
-  }, [page, pagination.page]);
 
   const content = (
     <div className="space-y-6 py-6 pr-6">

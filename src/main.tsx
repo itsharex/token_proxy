@@ -5,6 +5,7 @@ import { ThemeProvider } from "next-themes";
 import { routeTree } from "./routeTree.gen";
 
 import { I18nProvider } from "@/lib/i18n";
+import { LanguageObserver } from "@/components/LanguageObserver";
 
 const router = createRouter({ routeTree });
 
@@ -26,6 +27,8 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
         disableTransitionOnChange
       >
         <RouterProvider router={router} />
+        {/* Isolated language subscription - prevents global re-renders when language changes */}
+        <LanguageObserver />
       </ThemeProvider>
     </I18nProvider>
   </React.StrictMode>
