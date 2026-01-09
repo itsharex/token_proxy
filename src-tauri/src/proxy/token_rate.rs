@@ -3,12 +3,14 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use tiktoken_rs::{cl100k_base, o200k_base, CoreBPE};
+use tokio::sync::watch;
 
 const RATE_WINDOW: Duration = Duration::from_secs(1);
 
 #[derive(Clone)]
 pub(crate) struct TokenRateTracker {
     inner: Arc<Mutex<TrackerInner>>,
+    activity_tx: watch::Sender<u64>,
 }
 
 struct TrackerInner {
@@ -41,12 +43,23 @@ pub(crate) struct RequestTokenTracker {
 
 impl TokenRateTracker {
     pub(crate) fn new() -> Arc<Self> {
+        let (activity_tx, _activity_rx) = watch::channel(0u64);
         Arc::new(Self {
             inner: Arc::new(Mutex::new(TrackerInner {
                 next_id: 1,
                 requests: HashMap::new(),
             })),
+            activity_tx,
         })
+    }
+
+    pub(crate) fn subscribe_activity(&self) -> watch::Receiver<u64> {
+        self.activity_tx.subscribe()
+    }
+
+    pub(crate) fn notify_activity(&self) {
+        let next = self.activity_tx.borrow().wrapping_add(1);
+        let _ = self.activity_tx.send(next);
     }
 
     pub(crate) fn register(
@@ -70,6 +83,7 @@ impl TokenRateTracker {
         if let Some(tokens) = input_tokens {
             tracker.add_input_tokens(tokens);
         }
+        self.notify_activity();
         tracker
     }
 

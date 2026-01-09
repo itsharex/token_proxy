@@ -55,6 +55,8 @@ impl TrayState {
             .write()
             .expect("tray token rate config lock poisoned");
         *guard = config.clone();
+        // 配置变化也唤醒托盘刷新，避免空闲等待时错过更新。
+        self.inner.token_rate.notify_activity();
     }
 
     pub(crate) fn apply_status(&self, status: &ProxyServiceStatus) {
@@ -94,11 +96,7 @@ impl TrayState {
             self.set_title(None);
             return;
         }
-        if !self.inner.token_rate.has_active_requests() {
-            self.set_title(None);
-            return;
-        }
-
+        // 启用后始终显示速率，空闲时自然显示 0。
         let snapshot = self.inner.token_rate.snapshot();
         let title = format_rate_title(snapshot, config.format);
         self.set_title(Some(title));
@@ -228,14 +226,33 @@ pub(crate) fn init_tray(
 
 #[cfg(target_os = "macos")]
 fn start_token_rate_loop(tray_state: TrayState) {
+    let token_rate = tray_state.inner.token_rate.clone();
     tauri::async_runtime::spawn(async move {
-        let mut interval = tokio::time::interval(Duration::from_secs(1));
+        let mut activity_rx = token_rate.subscribe_activity();
         loop {
-            interval.tick().await;
             if tray_state.should_quit() {
                 break;
             }
+            if token_rate.has_active_requests() {
+                let mut interval = tokio::time::interval(Duration::from_millis(300));
+                loop {
+                    interval.tick().await;
+                    if tray_state.should_quit() {
+                        return;
+                    }
+                    tray_state.update_token_rate_title();
+                    if !token_rate.has_active_requests() {
+                        break;
+                    }
+                }
+                continue;
+            }
+
             tray_state.update_token_rate_title();
+            // 空闲时不轮询，等待新请求或配置变化唤醒。
+            if activity_rx.changed().await.is_err() {
+                break;
+            }
         }
     });
 }
