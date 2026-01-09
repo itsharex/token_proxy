@@ -53,6 +53,7 @@ export type UpstreamForm = {
 };
 
 export type ModelMappingForm = {
+  id: string;
   pattern: string;
   target: string;
 };

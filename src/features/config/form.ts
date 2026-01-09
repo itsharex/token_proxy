@@ -51,6 +51,7 @@ const DEFAULT_UPSTREAMS: UpstreamForm[] = [
 ];
 
 const INTEGER_PATTERN = /^-?\d+$/;
+let modelMappingCounter = 0;
 
 export const EMPTY_FORM: ConfigForm = {
   host: "127.0.0.1",
@@ -72,6 +73,16 @@ export function createEmptyUpstream(): UpstreamForm {
     index: "",
     enabled: true,
     modelMappings: [],
+  };
+}
+
+export function createModelMapping(pattern = "", target = "") {
+  // 稳定 id 用于列表渲染，避免输入时因 key 变化导致焦点丢失
+  modelMappingCounter += 1;
+  return {
+    id: `model-mapping-${Date.now()}-${modelMappingCounter}`,
+    pattern,
+    target,
   };
 }
 
@@ -170,10 +181,9 @@ export function validate(form: ConfigForm) {
 }
 
 function toModelMappingForm(mappings: Record<string, string>): ModelMappingForm[] {
-  return Object.entries(mappings).map(([pattern, target]) => ({
-    pattern,
-    target,
-  }));
+  return Object.entries(mappings).map(([pattern, target]) =>
+    createModelMapping(pattern, target),
+  );
 }
 
 function toModelMappingPayload(mappings: ModelMappingForm[]) {

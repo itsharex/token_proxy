@@ -24,7 +24,7 @@ npm run preview    # 预览生产构建
 npm run tauri      # Tauri 相关命令
 ```
 
-### Rust 测试
+### Rust 测试(自动进行测试)
 
 ```bash
 cd src-tauri && cargo test                # 运行所有测试
@@ -33,7 +33,7 @@ cd src-tauri && cargo test <test_name>    # 运行单个测试
 cd src-tauri && cargo test -- --nocapture # 查看测试输出
 ```
 
-### TypeScript 编译检查
+### TypeScript 编译检查(自动进行测试)
 
 ```bash
 npx tsc --noEmit    # 类型检查但不生成文件

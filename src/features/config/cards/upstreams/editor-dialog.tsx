@@ -1,3 +1,4 @@
+import { CircleX } from "lucide-react";
 import type { ReactNode } from "react";
 
 import {
@@ -23,6 +24,7 @@ import {
 } from "@/components/ui/select";
 import { getUpstreamLabel } from "@/features/config/cards/upstreams/constants";
 import type { UpstreamEditorState } from "@/features/config/cards/upstreams/types";
+import { createModelMapping } from "@/features/config/form";
 import type { ModelMappingForm, UpstreamForm } from "@/features/config/types";
 import { m } from "@/paraglide/messages.js";
 
@@ -53,14 +55,14 @@ type ModelMappingsEditorProps = {
 
 function ModelMappingsEditor({ mappings, onChange }: ModelMappingsEditorProps) {
   const handleAdd = () => {
-    onChange([...mappings, { pattern: "", target: "" }]);
+    onChange([...mappings, createModelMapping()]);
   };
 
   const handleUpdate = (index: number, patch: Partial<ModelMappingForm>) => {
     onChange(
       mappings.map((mapping, current) =>
-        current === index ? { ...mapping, ...patch } : mapping,
-      ),
+        current === index ? { ...mapping, ...patch } : mapping
+      )
     );
   };
 
@@ -78,15 +80,22 @@ function ModelMappingsEditor({ mappings, onChange }: ModelMappingsEditorProps) {
             <span className="sr-only">{m.model_mappings_remove()}</span>
           </div>
           {mappings.map((mapping, index) => (
-            <div key={`${mapping.pattern}-${index}`} className="grid grid-cols-[1fr_1fr_auto] gap-2">
+            <div
+              key={mapping.id}
+              className="grid grid-cols-[1fr_1fr_auto] gap-2"
+            >
               <Input
                 value={mapping.pattern}
-                onChange={(e) => handleUpdate(index, { pattern: e.target.value })}
+                onChange={(e) =>
+                  handleUpdate(index, { pattern: e.target.value })
+                }
                 placeholder={m.model_mappings_placeholder_pattern()}
               />
               <Input
                 value={mapping.target}
-                onChange={(e) => handleUpdate(index, { target: e.target.value })}
+                onChange={(e) =>
+                  handleUpdate(index, { target: e.target.value })
+                }
                 placeholder={m.model_mappings_placeholder_target()}
               />
               <Button
@@ -96,19 +105,23 @@ function ModelMappingsEditor({ mappings, onChange }: ModelMappingsEditorProps) {
                 aria-label={m.model_mappings_remove()}
                 onClick={() => handleRemove(index)}
               >
-                x
+                <CircleX className="size-4" aria-hidden="true" />
               </Button>
             </div>
           ))}
         </>
       ) : (
-        <p className="text-xs text-muted-foreground">{m.model_mappings_empty()}</p>
+        <p className="text-xs text-muted-foreground">
+          {m.model_mappings_empty()}
+        </p>
       )}
       <div className="flex flex-wrap items-center gap-2">
         <Button type="button" variant="secondary" size="sm" onClick={handleAdd}>
           {m.model_mappings_add()}
         </Button>
-        <span className="text-xs text-muted-foreground">{m.model_mappings_tip()}</span>
+        <span className="text-xs text-muted-foreground">
+          {m.model_mappings_tip()}
+        </span>
       </div>
     </div>
   );
@@ -128,7 +141,11 @@ type UpstreamIdentityFieldsProps = {
   onChangeDraft: (patch: Partial<UpstreamForm>) => void;
 };
 
-function UpstreamIdentityFields({ draft, providerOptions, onChangeDraft }: UpstreamIdentityFieldsProps) {
+function UpstreamIdentityFields({
+  draft,
+  providerOptions,
+  onChangeDraft,
+}: UpstreamIdentityFieldsProps) {
   return (
     <div data-slot="upstream-identity-fields" className="contents">
       <EditorField label={m.field_id()} htmlFor="upstream-editor-id">
@@ -221,7 +238,10 @@ type UpstreamOrderFieldsProps = {
   onChangeDraft: (patch: Partial<UpstreamForm>) => void;
 };
 
-function UpstreamOrderFields({ draft, onChangeDraft }: UpstreamOrderFieldsProps) {
+function UpstreamOrderFields({
+  draft,
+  onChangeDraft,
+}: UpstreamOrderFieldsProps) {
   return (
     <div data-slot="upstream-order-fields" className="contents">
       {/* Priority 和 Index 并排：四列布局 */}
@@ -252,7 +272,10 @@ type UpstreamModelMappingFieldsProps = {
   onChangeDraft: (patch: Partial<UpstreamForm>) => void;
 };
 
-function UpstreamModelMappingFields({ draft, onChangeDraft }: UpstreamModelMappingFieldsProps) {
+function UpstreamModelMappingFields({
+  draft,
+  onChangeDraft,
+}: UpstreamModelMappingFieldsProps) {
   return (
     <div data-slot="upstream-model-mapping-fields" className="contents">
       <Label className="self-start">{m.field_model_mappings()}</Label>
@@ -319,7 +342,9 @@ export function UpstreamEditorDialog({
     : m.upstreams_editor_title_default();
   const description =
     editor.open && editor.mode === "edit"
-      ? m.upstreams_editor_description_edit({ rowLabel: getUpstreamLabel(editor.index) })
+      ? m.upstreams_editor_description_edit({
+          rowLabel: getUpstreamLabel(editor.index),
+        })
       : m.upstreams_editor_description_create();
 
   return (
@@ -340,7 +365,9 @@ export function UpstreamEditorDialog({
         ) : null}
         <AlertDialogFooter>
           <AlertDialogCancel>{m.common_cancel()}</AlertDialogCancel>
-          <AlertDialogAction onClick={onSave}>{m.common_save()}</AlertDialogAction>
+          <AlertDialogAction onClick={onSave}>
+            {m.common_save()}
+          </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
