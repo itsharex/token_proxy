@@ -415,6 +415,10 @@ fn compact_error(err: &str) -> String {
 }
 
 fn load_tray_icon() -> Result<Image<'static>, Box<dyn std::error::Error>> {
-    let bytes = include_bytes!("../icons/icon-state.png");
+    let bytes: &[u8] = if cfg!(debug_assertions) {
+        &include_bytes!("../icons/icon-state.dev.png")[..]
+    } else {
+        &include_bytes!("../icons/icon-state.png")[..]
+    };
     Ok(Image::from_bytes(bytes)?)
 }
