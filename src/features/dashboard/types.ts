@@ -21,6 +21,15 @@ export type DashboardProviderStat = {
   cachedTokens: number;
 };
 
+export type DashboardSeriesPoint = {
+  tsMs: number;
+  totalRequests: number;
+  errorRequests: number;
+  inputTokens: number;
+  outputTokens: number;
+  cachedTokens: number;
+};
+
 export type DashboardRequestItem = {
   id: number;
   tsMs: number;
@@ -39,6 +48,7 @@ export type DashboardRequestItem = {
 export type DashboardSnapshot = {
   summary: DashboardSummary;
   providers: DashboardProviderStat[];
+  series: DashboardSeriesPoint[];
   recent: DashboardRequestItem[];
   truncated: boolean;
 };

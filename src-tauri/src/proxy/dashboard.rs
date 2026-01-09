@@ -37,6 +37,17 @@ pub(crate) struct DashboardProviderStat {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub(crate) struct DashboardSeriesPoint {
+    pub(crate) ts_ms: u64,
+    pub(crate) total_requests: u64,
+    pub(crate) error_requests: u64,
+    pub(crate) input_tokens: u64,
+    pub(crate) output_tokens: u64,
+    pub(crate) cached_tokens: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct DashboardRequestItem {
     pub(crate) id: u64,
     pub(crate) ts_ms: u64,
@@ -57,6 +68,7 @@ pub(crate) struct DashboardRequestItem {
 pub(crate) struct DashboardSnapshot {
     pub(crate) summary: DashboardSummary,
     pub(crate) providers: Vec<DashboardProviderStat>,
+    pub(crate) series: Vec<DashboardSeriesPoint>,
     pub(crate) recent: Vec<DashboardRequestItem>,
     /// 是否只基于日志文件末尾片段做统计（Step1：true；Step2 SQLite 后应为 false）。
     pub(crate) truncated: bool,
@@ -72,7 +84,27 @@ pub(crate) async fn read_snapshot(
     let pool = sqlite::open_pool(&app).await?;
     let from_ts_ms = range.from_ts_ms.map(|value| value as i64);
     let to_ts_ms = range.to_ts_ms.map(|value| value as i64);
+    let bucket_ms = resolve_bucket_ms(&pool, from_ts_ms, to_ts_ms).await?;
 
+    let summary = query_summary(&pool, from_ts_ms, to_ts_ms).await?;
+    let providers = query_providers(&pool, from_ts_ms, to_ts_ms).await?;
+    let series = query_series(&pool, from_ts_ms, to_ts_ms, bucket_ms).await?;
+    let recent = query_recent(&pool, from_ts_ms, to_ts_ms, offset).await?;
+
+    Ok(DashboardSnapshot {
+        summary,
+        providers,
+        series,
+        recent,
+        truncated: false,
+    })
+}
+
+async fn query_summary(
+    pool: &sqlx::SqlitePool,
+    from_ts_ms: Option<i64>,
+    to_ts_ms: Option<i64>,
+) -> Result<DashboardSummary, String> {
     let row = sqlx::query(
         r#"
 SELECT
@@ -94,7 +126,7 @@ WHERE (?1 IS NULL OR ts_ms >= ?1) AND (?2 IS NULL OR ts_ms <= ?2);
     )
     .bind(from_ts_ms)
     .bind(to_ts_ms)
-    .fetch_one(&pool)
+    .fetch_one(pool)
     .await
     .map_err(|err| format!("Failed to query dashboard summary: {err}"))?;
 
@@ -113,6 +145,23 @@ WHERE (?1 IS NULL OR ts_ms >= ?1) AND (?2 IS NULL OR ts_ms <= ?2);
         latency_sum_ms / total_requests
     };
 
+    Ok(DashboardSummary {
+        total_requests,
+        success_requests,
+        error_requests,
+        total_tokens,
+        input_tokens,
+        output_tokens,
+        cached_tokens,
+        avg_latency_ms,
+    })
+}
+
+async fn query_providers(
+    pool: &sqlx::SqlitePool,
+    from_ts_ms: Option<i64>,
+    to_ts_ms: Option<i64>,
+) -> Result<Vec<DashboardProviderStat>, String> {
     let providers = sqlx::query(
         r#"
 SELECT
@@ -132,7 +181,7 @@ ORDER BY total_tokens DESC;
     )
     .bind(from_ts_ms)
     .bind(to_ts_ms)
-    .fetch_all(&pool)
+    .fetch_all(pool)
     .await
     .map_err(|err| format!("Failed to query provider stats: {err}"))?
     .into_iter()
@@ -150,6 +199,64 @@ ORDER BY total_tokens DESC;
     })
     .collect::<Vec<_>>();
 
+    Ok(providers)
+}
+
+async fn query_series(
+    pool: &sqlx::SqlitePool,
+    from_ts_ms: Option<i64>,
+    to_ts_ms: Option<i64>,
+    bucket_ms: u64,
+) -> Result<Vec<DashboardSeriesPoint>, String> {
+    let series = sqlx::query(
+        r#"
+SELECT
+  (ts_ms / ?3) * ?3 AS bucket_ts_ms,
+  COUNT(*) AS total_requests,
+  COALESCE(SUM(CASE WHEN status >= 400 THEN 1 ELSE 0 END), 0) AS error_requests,
+  COALESCE(SUM(COALESCE(input_tokens, 0)), 0) AS input_tokens,
+  COALESCE(SUM(COALESCE(output_tokens, 0)), 0) AS output_tokens,
+  COALESCE(SUM(COALESCE(cached_tokens, 0)), 0) AS cached_tokens
+FROM request_logs
+WHERE (?1 IS NULL OR ts_ms >= ?1) AND (?2 IS NULL OR ts_ms <= ?2)
+GROUP BY bucket_ts_ms
+ORDER BY bucket_ts_ms ASC;
+"#,
+    )
+    .bind(from_ts_ms)
+    .bind(to_ts_ms)
+    .bind(i64::try_from(bucket_ms).unwrap_or(i64::MAX))
+    .fetch_all(pool)
+    .await
+    .map_err(|err| format!("Failed to query dashboard series: {err}"))?
+    .into_iter()
+    .filter_map(|row| {
+        let ts_ms: i64 = row.try_get("bucket_ts_ms").ok()?;
+        let total_requests: i64 = row.try_get("total_requests").ok()?;
+        let error_requests: i64 = row.try_get("error_requests").ok()?;
+        let input_tokens: i64 = row.try_get("input_tokens").ok()?;
+        let output_tokens: i64 = row.try_get("output_tokens").ok()?;
+        let cached_tokens: i64 = row.try_get("cached_tokens").ok()?;
+        Some(DashboardSeriesPoint {
+            ts_ms: i64_to_u64(ts_ms),
+            total_requests: i64_to_u64(total_requests),
+            error_requests: i64_to_u64(error_requests),
+            input_tokens: i64_to_u64(input_tokens),
+            output_tokens: i64_to_u64(output_tokens),
+            cached_tokens: i64_to_u64(cached_tokens),
+        })
+    })
+    .collect::<Vec<_>>();
+
+    Ok(series)
+}
+
+async fn query_recent(
+    pool: &sqlx::SqlitePool,
+    from_ts_ms: Option<i64>,
+    to_ts_ms: Option<i64>,
+    offset: u32,
+) -> Result<Vec<DashboardRequestItem>, String> {
     let recent = sqlx::query(
         r#"
 SELECT
@@ -179,7 +286,7 @@ LIMIT ?3 OFFSET ?4;
     .bind(to_ts_ms)
     .bind(i64::from(RECENT_PAGE_SIZE))
     .bind(i64::from(offset))
-    .fetch_all(&pool)
+    .fetch_all(pool)
     .await
     .map_err(|err| format!("Failed to query recent requests: {err}"))?
     .into_iter()
@@ -213,21 +320,60 @@ LIMIT ?3 OFFSET ?4;
     })
     .collect::<Vec<_>>();
 
-    Ok(DashboardSnapshot {
-        summary: DashboardSummary {
-            total_requests,
-            success_requests,
-            error_requests,
-            total_tokens,
-            input_tokens,
-            output_tokens,
-            cached_tokens,
-            avg_latency_ms,
-        },
-        providers,
-        recent,
-        truncated: false,
-    })
+    Ok(recent)
+}
+
+async fn resolve_bucket_ms(
+    pool: &sqlx::SqlitePool,
+    from_ts_ms: Option<i64>,
+    to_ts_ms: Option<i64>,
+) -> Result<u64, String> {
+    if let (Some(from), Some(to)) = (from_ts_ms, to_ts_ms) {
+        let span_ms = (to - from).max(0) as u64;
+        return Ok(select_bucket_ms(span_ms));
+    }
+
+    let row = sqlx::query(
+        r#"
+SELECT
+  MIN(ts_ms) AS min_ts,
+  MAX(ts_ms) AS max_ts
+FROM request_logs
+WHERE (?1 IS NULL OR ts_ms >= ?1) AND (?2 IS NULL OR ts_ms <= ?2);
+"#,
+    )
+    .bind(from_ts_ms)
+    .bind(to_ts_ms)
+    .fetch_one(pool)
+    .await
+    .map_err(|err| format!("Failed to query dashboard range: {err}"))?;
+
+    let min_ts: Option<i64> = row.try_get("min_ts").ok();
+    let max_ts: Option<i64> = row.try_get("max_ts").ok();
+    let start = from_ts_ms.or(min_ts).unwrap_or(0);
+    let end = to_ts_ms.or(max_ts).unwrap_or(start);
+    let span_ms = (end - start).max(0) as u64;
+    Ok(select_bucket_ms(span_ms))
+}
+
+fn select_bucket_ms(span_ms: u64) -> u64 {
+    // 根据跨度选择合适的桶大小，避免点数过多或过少。
+    if span_ms <= 60 * 60 * 1000 {
+        return 5 * 60 * 1000;
+    }
+    if span_ms <= 6 * 60 * 60 * 1000 {
+        return 15 * 60 * 1000;
+    }
+    if span_ms <= 24 * 60 * 60 * 1000 {
+        return 30 * 60 * 1000;
+    }
+    if span_ms <= 7 * 24 * 60 * 60 * 1000 {
+        return 2 * 60 * 60 * 1000;
+    }
+    if span_ms <= 31 * 24 * 60 * 60 * 1000 {
+        return 24 * 60 * 60 * 1000;
+    }
+    7 * 24 * 60 * 60 * 1000
 }
 
 fn i64_to_u64(value: i64) -> u64 {

@@ -1,5 +1,6 @@
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
+#[cfg(target_os = "macos")]
 use std::time::Duration;
 
 use tauri::image::Image;
@@ -9,7 +10,9 @@ use tauri::{AppHandle, Manager};
 
 use crate::proxy::config::{TrayTokenRateConfig, TrayTokenRateFormat};
 use crate::proxy::service::{ProxyServiceHandle, ProxyServiceState, ProxyServiceStatus};
-use crate::proxy::token_rate::{TokenRateSnapshot, TokenRateTracker};
+#[cfg(target_os = "macos")]
+use crate::proxy::token_rate::TokenRateSnapshot;
+use crate::proxy::token_rate::TokenRateTracker;
 
 type AppMenuItem = MenuItem<tauri::Wry>;
 type AppTrayIcon = TrayIcon<tauri::Wry>;
@@ -37,6 +40,9 @@ struct TrayStateInner {
     token_rate_config: RwLock<TrayTokenRateConfig>,
     last_title: RwLock<Option<String>>,
     should_quit: AtomicBool,
+    // 0 表示无循环，非 0 表示正在运行的 token 速率循环 id。
+    token_rate_loop_active: AtomicU64,
+    token_rate_loop_counter: AtomicU64,
 }
 
 impl TrayState {
@@ -55,6 +61,16 @@ impl TrayState {
             .write()
             .expect("tray token rate config lock poisoned");
         *guard = config.clone();
+        self.inner.token_rate.set_enabled(config.enabled);
+        #[cfg(target_os = "macos")]
+        {
+            if config.enabled {
+                self.ensure_token_rate_loop();
+            } else {
+                self.stop_token_rate_loop();
+                self.set_title(None);
+            }
+        }
         // 配置变化也唤醒托盘刷新，避免空闲等待时错过更新。
         self.inner.token_rate.notify_activity();
     }
@@ -115,6 +131,65 @@ impl TrayState {
         let _ = self.inner.tray.set_title(title.as_deref());
         *last_title = title;
     }
+
+    #[cfg(target_os = "macos")]
+    fn ensure_token_rate_loop(&self) {
+        if !self.is_token_rate_enabled() {
+            return;
+        }
+        let current = self
+            .inner
+            .token_rate_loop_active
+            .load(Ordering::SeqCst);
+        if current != 0 {
+            return;
+        }
+        let loop_id = self.inner.token_rate_loop_counter.fetch_add(1, Ordering::SeqCst) + 1;
+        if self
+            .inner
+            .token_rate_loop_active
+            .compare_exchange(0, loop_id, Ordering::SeqCst, Ordering::SeqCst)
+            .is_ok()
+        {
+            start_token_rate_loop(self.clone(), loop_id);
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    fn stop_token_rate_loop(&self) {
+        self.inner.token_rate_loop_active.store(0, Ordering::SeqCst);
+    }
+
+    #[cfg(target_os = "macos")]
+    fn is_token_rate_enabled(&self) -> bool {
+        self.inner
+            .token_rate_config
+            .read()
+            .expect("tray token rate config lock poisoned")
+            .enabled
+    }
+
+    #[cfg(target_os = "macos")]
+    fn should_keep_token_rate_loop(&self, loop_id: u64) -> bool {
+        if self.should_quit() {
+            return false;
+        }
+        self.inner
+            .token_rate_loop_active
+            .load(Ordering::SeqCst)
+            == loop_id
+    }
+
+    #[cfg(target_os = "macos")]
+    fn finish_token_rate_loop(&self, loop_id: u64) {
+        let active = self
+            .inner
+            .token_rate_loop_active
+            .load(Ordering::SeqCst);
+        if active == loop_id {
+            self.inner.token_rate_loop_active.store(0, Ordering::SeqCst);
+        }
+    }
 }
 
 pub(crate) fn init_tray(
@@ -161,6 +236,8 @@ pub(crate) fn init_tray(
             token_rate_config: RwLock::new(TrayTokenRateConfig::default()),
             last_title: RwLock::new(None),
             should_quit: AtomicBool::new(false),
+            token_rate_loop_active: AtomicU64::new(0),
+            token_rate_loop_counter: AtomicU64::new(0),
         }),
     };
 
@@ -216,26 +293,26 @@ pub(crate) fn init_tray(
     });
 
     #[cfg(target_os = "macos")]
-    start_token_rate_loop(tray_state.clone());
+    tray_state.ensure_token_rate_loop();
 
     Ok(tray_state)
 }
 
 #[cfg(target_os = "macos")]
-fn start_token_rate_loop(tray_state: TrayState) {
+fn start_token_rate_loop(tray_state: TrayState, loop_id: u64) {
     let token_rate = tray_state.inner.token_rate.clone();
     tauri::async_runtime::spawn(async move {
         let mut activity_rx = token_rate.subscribe_activity();
-        loop {
-            if tray_state.should_quit() {
-                break;
+        'main: loop {
+            if !tray_state.should_keep_token_rate_loop(loop_id) {
+                break 'main;
             }
             if token_rate.has_active_requests() {
                 let mut interval = tokio::time::interval(Duration::from_millis(333));
                 loop {
                     interval.tick().await;
-                    if tray_state.should_quit() {
-                        return;
+                    if !tray_state.should_keep_token_rate_loop(loop_id) {
+                        break 'main;
                     }
                     tray_state.update_token_rate_title();
                     if !token_rate.has_active_requests() {
@@ -248,9 +325,10 @@ fn start_token_rate_loop(tray_state: TrayState) {
             tray_state.update_token_rate_title();
             // 空闲时不轮询，等待新请求或配置变化唤醒。
             if activity_rx.changed().await.is_err() {
-                break;
+                break 'main;
             }
         }
+        tray_state.finish_token_rate_loop(loop_id);
     });
 }
 

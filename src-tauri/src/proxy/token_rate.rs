@@ -1,5 +1,6 @@
 use std::collections::{HashMap, VecDeque};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, OnceLock, RwLock};
 use std::time::{Duration, Instant};
 
 use tiktoken_rs::{cl100k_base, o200k_base, CoreBPE};
@@ -9,13 +10,16 @@ const RATE_WINDOW: Duration = Duration::from_secs(1);
 
 #[derive(Clone)]
 pub(crate) struct TokenRateTracker {
-    inner: Arc<Mutex<TrackerInner>>,
+    inner: Arc<TrackerInner>,
     activity_tx: watch::Sender<u64>,
 }
 
 struct TrackerInner {
-    next_id: u64,
-    requests: HashMap<u64, RequestWindow>,
+    next_id: AtomicU64,
+    active: AtomicUsize,
+    enabled: AtomicBool,
+    generation: AtomicU64,
+    requests: RwLock<HashMap<u64, Arc<Mutex<RequestWindow>>>>,
 }
 
 struct RequestWindow {
@@ -36,19 +40,24 @@ pub(crate) struct TokenRateSnapshot {
 }
 
 pub(crate) struct RequestTokenTracker {
-    id: u64,
+    id: Option<u64>,
+    window: Option<Arc<Mutex<RequestWindow>>>,
     tracker: TokenRateTracker,
     model: Option<String>,
+    generation: Option<u64>,
 }
 
 impl TokenRateTracker {
     pub(crate) fn new() -> Arc<Self> {
         let (activity_tx, _activity_rx) = watch::channel(0u64);
         Arc::new(Self {
-            inner: Arc::new(Mutex::new(TrackerInner {
-                next_id: 1,
-                requests: HashMap::new(),
-            })),
+            inner: Arc::new(TrackerInner {
+                next_id: AtomicU64::new(1),
+                active: AtomicUsize::new(0),
+                enabled: AtomicBool::new(true),
+                generation: AtomicU64::new(1),
+                requests: RwLock::new(HashMap::new()),
+            }),
             activity_tx,
         })
     }
@@ -62,39 +71,97 @@ impl TokenRateTracker {
         let _ = self.activity_tx.send(next);
     }
 
+    pub(crate) fn set_enabled(&self, enabled: bool) {
+        let previous = self.inner.enabled.swap(enabled, Ordering::SeqCst);
+        if previous == enabled {
+            return;
+        }
+        // 每次开关切换递增 generation，确保旧请求不会在重新开启后继续计数。
+        self.inner.generation.fetch_add(1, Ordering::SeqCst);
+        if !enabled {
+            let mut guard = self
+                .inner
+                .requests
+                .write()
+                .expect("token rate lock poisoned");
+            guard.clear();
+            self.inner.active.store(0, Ordering::SeqCst);
+        }
+    }
+
     pub(crate) fn register(
         &self,
         model: Option<String>,
         input_tokens: Option<u64>,
     ) -> RequestTokenTracker {
-        let id = {
-            let mut guard = self.inner.lock().expect("token rate lock poisoned");
-            let id = guard.next_id;
-            guard.next_id = guard.next_id.saturating_add(1);
-            guard.requests.insert(id, RequestWindow::new());
-            id
+        let enabled = self.inner.enabled.load(Ordering::SeqCst);
+        let generation = self.inner.generation.load(Ordering::SeqCst);
+        let (mut id, mut window) = if enabled {
+            let id = self.inner.next_id.fetch_add(1, Ordering::SeqCst);
+            let window = Arc::new(Mutex::new(RequestWindow::new()));
+            let mut guard = self
+                .inner
+                .requests
+                .write()
+                .expect("token rate lock poisoned");
+            guard.insert(id, window.clone());
+            self.inner.active.fetch_add(1, Ordering::SeqCst);
+            (Some(id), Some(window))
+        } else {
+            (None, None)
         };
+        let mut effective_generation = if enabled { Some(generation) } else { None };
+        if let Some(current_id) = id {
+            let still_enabled = self.inner.enabled.load(Ordering::SeqCst);
+            let current_generation = self.inner.generation.load(Ordering::SeqCst);
+            if !still_enabled || current_generation != generation {
+                // 开关状态变更后不再追踪该请求，避免重新开启时继续计数。
+                self.unregister(current_id);
+                id = None;
+                window = None;
+                effective_generation = None;
+            }
+        }
 
         let mut tracker = RequestTokenTracker {
             id,
+            window,
             tracker: self.clone(),
             model,
+            generation: effective_generation,
         };
         if let Some(tokens) = input_tokens {
             tracker.add_input_tokens(tokens);
         }
-        self.notify_activity();
+        if enabled {
+            self.notify_activity();
+        }
         tracker
     }
 
     pub(crate) fn snapshot(&self) -> TokenRateSnapshot {
+        if !self.inner.enabled.load(Ordering::SeqCst) {
+            return TokenRateSnapshot {
+                input: 0,
+                output: 0,
+                total: 0,
+            };
+        }
         let now = Instant::now();
-        let mut guard = self.inner.lock().expect("token rate lock poisoned");
+        let windows: Vec<Arc<Mutex<RequestWindow>>> = self
+            .inner
+            .requests
+            .read()
+            .expect("token rate lock poisoned")
+            .values()
+            .cloned()
+            .collect();
         let mut input = 0u64;
         let mut output = 0u64;
-        for window in guard.requests.values_mut() {
-            window.prune(now);
-            let (i, o) = window.sum();
+        for window in windows {
+            let mut guard = window.lock().expect("token rate lock poisoned");
+            guard.prune(now);
+            let (i, o) = guard.sum();
             input = input.saturating_add(i);
             output = output.saturating_add(o);
         }
@@ -106,23 +173,18 @@ impl TokenRateTracker {
     }
 
     pub(crate) fn has_active_requests(&self) -> bool {
-        let now = Instant::now();
-        let mut guard = self.inner.lock().expect("token rate lock poisoned");
-        for window in guard.requests.values_mut() {
-            window.prune(now);
+        if !self.inner.enabled.load(Ordering::SeqCst) {
+            return false;
         }
-        !guard.requests.is_empty()
+        self.inner.active.load(Ordering::SeqCst) > 0
     }
 
-    fn record(&self, id: u64, input: u64, output: u64) {
+    fn record(&self, window: &Arc<Mutex<RequestWindow>>, input: u64, output: u64) {
         if input == 0 && output == 0 {
             return;
         }
-        let mut guard = self.inner.lock().expect("token rate lock poisoned");
-        let Some(window) = guard.requests.get_mut(&id) else {
-            return;
-        };
-        window.push(TokenEvent {
+        let mut guard = window.lock().expect("token rate lock poisoned");
+        guard.push(TokenEvent {
             ts: Instant::now(),
             input,
             output,
@@ -130,8 +192,16 @@ impl TokenRateTracker {
     }
 
     fn unregister(&self, id: u64) {
-        let mut guard = self.inner.lock().expect("token rate lock poisoned");
-        guard.requests.remove(&id);
+        let removed = self
+            .inner
+            .requests
+            .write()
+            .expect("token rate lock poisoned")
+            .remove(&id)
+            .is_some();
+        if removed {
+            self.inner.active.fetch_sub(1, Ordering::SeqCst);
+        }
     }
 }
 
@@ -169,18 +239,43 @@ impl RequestWindow {
 
 impl RequestTokenTracker {
     pub(crate) fn add_input_tokens(&mut self, tokens: u64) {
-        self.tracker.record(self.id, tokens, 0);
+        if !self.can_record() {
+            return;
+        }
+        let Some(window) = self.window.as_ref() else {
+            return;
+        };
+        self.tracker.record(window, tokens, 0);
     }
 
     pub(crate) fn add_output_text(&mut self, text: &str) {
+        if !self.can_record() {
+            return;
+        }
         let tokens = estimate_text_tokens(self.model.as_deref(), text);
-        self.tracker.record(self.id, 0, tokens);
+        let Some(window) = self.window.as_ref() else {
+            return;
+        };
+        self.tracker.record(window, 0, tokens);
+    }
+
+    fn can_record(&self) -> bool {
+        let Some(generation) = self.generation else {
+            return false;
+        };
+        if !self.tracker.inner.enabled.load(Ordering::SeqCst) {
+            return false;
+        }
+        // generation 不一致说明开关已经切换，旧请求不再计数。
+        self.tracker.inner.generation.load(Ordering::SeqCst) == generation
     }
 }
 
 impl Drop for RequestTokenTracker {
     fn drop(&mut self) {
-        self.tracker.unregister(self.id);
+        if let Some(id) = self.id {
+            self.tracker.unregister(id);
+        }
     }
 }
 
