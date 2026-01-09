@@ -55,7 +55,7 @@
   "proxy_core_tray_token_rate_aria": "启用状态栏实时 token",
   "proxy_core_tray_token_rate_format_label": "展示格式",
   "proxy_core_tray_token_rate_format_placeholder": "选择格式",
-  "proxy_core_tray_token_rate_format_combined": "合并（t/s）",
+  "proxy_core_tray_token_rate_format_combined": "合并",
   "proxy_core_tray_token_rate_format_split": "拆分（↑/↓）",
   "proxy_core_tray_token_rate_format_both": "两者",
   "proxy_core_tray_token_rate_macos_only": "仅 macOS 菜单栏生效。",
