@@ -76,6 +76,20 @@
   --sidebar-accent-foreground: oklch(0.21 0.006 285.885);
   --sidebar-border: oklch(0.92 0.004 286.32);
   --sidebar-ring: oklch(0.708 0 0);
+  --app-shell-bg: radial-gradient(
+      900px 500px at 12% -10%,
+      rgba(255, 214, 170, 0.45),
+      transparent 70%
+    ),
+    radial-gradient(
+      900px 520px at 88% 12%,
+      rgba(178, 226, 214, 0.45),
+      transparent 70%
+    ),
+    linear-gradient(180deg, #f9f7f2 0%, #f1ece4 52%, #ece6dd 100%);
+  --app-shell-grid: linear-gradient(rgba(15, 23, 42, 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(15, 23, 42, 0.05) 1px, transparent 1px);
+  --app-shell-grid-opacity: 0.5;
 }
 
 .dark {
@@ -110,6 +124,20 @@
   --sidebar-accent-foreground: oklch(0.985 0 0);
   --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: oklch(0.439 0 0);
+  --app-shell-bg: radial-gradient(
+      900px 520px at 12% -10%,
+      rgba(59, 130, 246, 0.18),
+      transparent 70%
+    ),
+    radial-gradient(
+      900px 520px at 88% 12%,
+      rgba(16, 185, 129, 0.16),
+      transparent 70%
+    ),
+    linear-gradient(180deg, #0f1116 0%, #0c1016 55%, #0a0d12 100%);
+  --app-shell-grid: linear-gradient(rgba(248, 250, 252, 0.06) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(248, 250, 252, 0.06) 1px, transparent 1px);
+  --app-shell-grid-opacity: 0.35;
 }
 
 @layer base {
@@ -132,27 +160,16 @@
   height: 100%;
   position: relative;
   overflow: hidden;
-  background: radial-gradient(
-      900px 500px at 12% -10%,
-      rgba(255, 214, 170, 0.45),
-      transparent 70%
-    ),
-    radial-gradient(
-      900px 520px at 88% 12%,
-      rgba(178, 226, 214, 0.45),
-      transparent 70%
-    ),
-    linear-gradient(180deg, #f9f7f2 0%, #f1ece4 52%, #ece6dd 100%);
+  background: var(--app-shell-bg);
 }
 
 .app-shell::after {
   content: "";
   position: absolute;
   inset: 0;
-  background-image: linear-gradient(rgba(15, 23, 42, 0.05) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(15, 23, 42, 0.05) 1px, transparent 1px);
+  background-image: var(--app-shell-grid);
   background-size: 28px 28px;
-  opacity: 0.5;
+  opacity: var(--app-shell-grid-opacity);
   pointer-events: none;
 }
 

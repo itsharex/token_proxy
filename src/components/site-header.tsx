@@ -1,6 +1,7 @@
 import type { ReactNode } from "react"
 
 import { LanguageSwitcher } from "@/components/LanguageSwitcher"
+import { ThemeSwitcher } from "@/components/ThemeSwitcher"
 import { Separator } from "@/components/ui/separator"
 import { SidebarTrigger } from "@/components/ui/sidebar"
 
@@ -21,6 +22,7 @@ export function SiteHeader({ title, actions }: SiteHeaderProps) {
         <h1 className="text-base font-medium">{title}</h1>
         <div className="ml-auto flex items-center gap-2">
           {actions}
+          <ThemeSwitcher />
           <LanguageSwitcher />
         </div>
       </div>

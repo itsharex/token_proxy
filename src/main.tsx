@@ -1,6 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { RouterProvider, createRouter } from "@tanstack/react-router";
+import { ThemeProvider } from "next-themes";
 import { routeTree } from "./routeTree.gen";
 
 import { I18nProvider } from "@/lib/i18n";
@@ -16,7 +17,16 @@ declare module "@tanstack/react-router" {
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
     <I18nProvider>
-      <RouterProvider router={router} />
+      {/* Follow system theme and persist to localStorage; class drives dark styles. */}
+      <ThemeProvider
+        attribute="class"
+        defaultTheme="system"
+        enableSystem
+        storageKey="token-proxy-theme"
+        disableTransitionOnChange
+      >
+        <RouterProvider router={router} />
+      </ThemeProvider>
     </I18nProvider>
   </React.StrictMode>
 );
