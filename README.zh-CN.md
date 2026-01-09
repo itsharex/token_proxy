@@ -28,7 +28,12 @@
       "api_key": null,
       "priority": 0,
       "index": 0,
-      "enabled": true
+      "enabled": true,
+      "model_mappings": {
+        "gpt-4": "gpt-4.1",
+        "gpt-4*": "gpt-4.1-mini",
+        "*": "gpt-4.1-mini"
+      }
     },
     {
       "id": "openai-responses",
@@ -68,3 +73,4 @@
 - `priority` 越大优先级越高；同优先级内按 `index` 升序。
 - `index` 缺失时，保存配置会在当前最大 `index` 之后按顺序全局自动补齐。
 - `enabled` 用于禁用某个 upstream 而不删除；禁用的 upstream 不参与负载均衡。
+- `model_mappings` 用于按 upstream 重写模型名（精确匹配、前缀通配 `*`、全量通配 `*`）；优先级：精确 > 前缀 > 通配；当映射生效时，响应会回写原始模型别名。

@@ -91,6 +91,15 @@
   "field_api_key": "API Key",
   "field_priority": "Priority",
   "field_index": "Index",
+  "field_model_mappings": "Model mappings",
+  "field_model_mapping_pattern": "Match pattern",
+  "field_model_mapping_target": "Target model",
+  "model_mappings_add": "Add mapping",
+  "model_mappings_remove": "Remove mapping",
+  "model_mappings_empty": "No mappings yet.",
+  "model_mappings_tip": "Exact: gpt-4, prefix: gpt-4*, wildcard: * (priority: exact > prefix > wildcard).",
+  "model_mappings_placeholder_pattern": "gpt-4*",
+  "model_mappings_placeholder_target": "gpt-4.1",
   "upstreams_delete_title": "Delete upstream?",
   "upstreams_delete_description": "{rowLabel} will be removed.",
   "upstreams_columns_title": "Visible columns",
@@ -181,5 +190,11 @@
   "error_upstream_provider_required": "Upstream {id} provider is required.",
   "error_upstream_base_url_required": "Upstream {id} base URL is required.",
   "error_upstream_priority_integer": "Upstream {id} priority must be an integer.",
-  "error_upstream_index_integer": "Upstream {id} index must be an integer."
+  "error_upstream_index_integer": "Upstream {id} index must be an integer.",
+  "error_model_mapping_pattern_required": "Upstream {id} mapping row {row} pattern is required.",
+  "error_model_mapping_target_required": "Upstream {id} mapping row {row} target is required.",
+  "error_model_mapping_pattern_duplicate": "Upstream {id} has duplicated mapping pattern: {pattern}.",
+  "error_model_mapping_pattern_invalid": "Upstream {id} has invalid mapping pattern: {pattern}.",
+  "error_model_mapping_wildcard_multiple": "Upstream {id} can only define one wildcard mapping \"*\".",
+  "error_model_mapping_prefix_required": "Upstream {id} mapping row {row} prefix cannot be empty."
 }

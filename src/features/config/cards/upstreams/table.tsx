@@ -1,4 +1,4 @@
-import { Columns3, Eye, EyeOff, Pencil, ToggleLeft, ToggleRight, Trash2 } from "lucide-react";
+import { Ban, Check, Columns3, Eye, EyeOff, Pencil, Trash2 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -167,9 +167,9 @@ function UpstreamRowActions({
           aria-label={enabled ? m.upstreams_row_disable({ rowLabel }) : m.upstreams_row_enable({ rowLabel })}
         >
           {enabled ? (
-            <ToggleRight className="size-4" aria-hidden="true" />
+            <Check className="size-4 text-emerald-600 dark:text-emerald-400" aria-hidden="true" />
           ) : (
-            <ToggleLeft className="size-4" aria-hidden="true" />
+            <Ban className="size-4 text-muted-foreground" aria-hidden="true" />
           )}
         </Button>
         <Button

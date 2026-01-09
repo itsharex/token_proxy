@@ -1,5 +1,6 @@
 import {
   type ConfigForm,
+  type ModelMappingForm,
   type ProxyConfigFile,
   type UpstreamForm,
   UPSTREAM_STRATEGIES,
@@ -15,6 +16,7 @@ const DEFAULT_UPSTREAMS: UpstreamForm[] = [
     priority: "0",
     index: "0",
     enabled: true,
+    modelMappings: [],
   },
   {
     id: "openai-responses",
@@ -24,6 +26,7 @@ const DEFAULT_UPSTREAMS: UpstreamForm[] = [
     priority: "0",
     index: "1",
     enabled: true,
+    modelMappings: [],
   },
   {
     id: "anthropic-default",
@@ -33,6 +36,7 @@ const DEFAULT_UPSTREAMS: UpstreamForm[] = [
     priority: "0",
     index: "2",
     enabled: true,
+    modelMappings: [],
   },
   {
     id: "gemini-default",
@@ -42,6 +46,7 @@ const DEFAULT_UPSTREAMS: UpstreamForm[] = [
     priority: "0",
     index: "3",
     enabled: true,
+    modelMappings: [],
   },
 ];
 
@@ -66,6 +71,7 @@ export function createEmptyUpstream(): UpstreamForm {
     priority: "",
     index: "",
     enabled: true,
+    modelMappings: [],
   };
 }
 
@@ -85,6 +91,7 @@ export function toForm(config: ProxyConfigFile): ConfigForm {
       priority: upstream.priority === null ? "" : String(upstream.priority),
       index: upstream.index === null ? "" : String(upstream.index),
       enabled: upstream.enabled,
+      modelMappings: toModelMappingForm(upstream.model_mappings),
     })),
   };
 }
@@ -106,6 +113,7 @@ export function toPayload(form: ConfigForm): ProxyConfigFile {
       priority: parseOptionalInt(upstream.priority),
       index: parseOptionalInt(upstream.index),
       enabled: upstream.enabled,
+      model_mappings: toModelMappingPayload(upstream.modelMappings),
     })),
   };
 }
@@ -152,9 +160,70 @@ export function validate(form: ConfigForm) {
     if (!isValidOptionalInt(upstream.index)) {
       return { valid: false, message: m.error_upstream_index_integer({ id }) };
     }
+    const mappingError = validateModelMappings(upstream.modelMappings, id);
+    if (mappingError) {
+      return { valid: false, message: mappingError };
+    }
   }
 
   return { valid: true, message: "" };
+}
+
+function toModelMappingForm(mappings: Record<string, string>): ModelMappingForm[] {
+  return Object.entries(mappings).map(([pattern, target]) => ({
+    pattern,
+    target,
+  }));
+}
+
+function toModelMappingPayload(mappings: ModelMappingForm[]) {
+  const entries = mappings.map(
+    (mapping): [string, string] => [mapping.pattern.trim(), mapping.target.trim()],
+  );
+  return Object.fromEntries(entries);
+}
+
+function validateModelMappings(mappings: ModelMappingForm[], upstreamId: string) {
+  const seen = new Set<string>();
+  let wildcardSeen = false;
+  for (let index = 0; index < mappings.length; index += 1) {
+    const row = String(index + 1);
+    const pattern = mappings[index]?.pattern.trim() ?? "";
+    const target = mappings[index]?.target.trim() ?? "";
+    if (!pattern) {
+      return m.error_model_mapping_pattern_required({ id: upstreamId, row });
+    }
+    if (!target) {
+      return m.error_model_mapping_target_required({ id: upstreamId, row });
+    }
+    if (seen.has(pattern)) {
+      return m.error_model_mapping_pattern_duplicate({ id: upstreamId, pattern });
+    }
+    seen.add(pattern);
+
+    if (pattern === "*") {
+      if (wildcardSeen) {
+        return m.error_model_mapping_wildcard_multiple({ id: upstreamId });
+      }
+      wildcardSeen = true;
+      continue;
+    }
+
+    if (pattern.includes("*") && !pattern.endsWith("*")) {
+      return m.error_model_mapping_pattern_invalid({ id: upstreamId, pattern });
+    }
+
+    if (pattern.endsWith("*")) {
+      const prefix = pattern.slice(0, -1).trim();
+      if (!prefix) {
+        return m.error_model_mapping_prefix_required({ id: upstreamId, row });
+      }
+      if (prefix.includes("*")) {
+        return m.error_model_mapping_pattern_invalid({ id: upstreamId, pattern });
+      }
+    }
+  }
+  return "";
 }
 
 function isValidOptionalInt(value: string) {

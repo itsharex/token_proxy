@@ -15,6 +15,7 @@ use tokio::sync::RwLock;
 
 use super::{
     config::ProxyConfig,
+    gemini,
     http,
     openai_compat::{
         inbound_format, transform_request_body, ApiFormat, FormatTransform, CHAT_PATH,
@@ -29,9 +30,6 @@ const PROVIDER_ANTHROPIC: &str = "anthropic";
 const PROVIDER_GEMINI: &str = "gemini";
 const ANTHROPIC_MESSAGES_PREFIX: &str = "/v1/messages";
 const ANTHROPIC_COMPLETE_PATH: &str = "/v1/complete";
-const GEMINI_MODELS_PREFIX: &str = "/v1beta/models/";
-const GEMINI_GENERATE_SUFFIX: &str = ":generateContent";
-const GEMINI_STREAM_SUFFIX: &str = ":streamGenerateContent";
 const REQUEST_META_LIMIT_BYTES: usize = 2 * 1024 * 1024;
 const REQUEST_TRANSFORM_LIMIT_BYTES: usize = 4 * 1024 * 1024;
 
@@ -51,7 +49,7 @@ fn resolve_dispatch_plan(config: &ProxyConfig, path: &str) -> Result<DispatchPla
     let has_gemini = config.provider_upstreams(PROVIDER_GEMINI).is_some();
     let allow_format_conversion = config.enable_api_format_conversion;
 
-    if is_gemini_path(path) {
+    if gemini::is_gemini_path(path) {
         if has_gemini {
             return Ok(DispatchPlan {
                 provider: PROVIDER_GEMINI,
@@ -289,31 +287,9 @@ fn is_anthropic_path(path: &str) -> bool {
         .is_some_and(|byte| *byte == b'/')
 }
 
-fn is_gemini_path(path: &str) -> bool {
-    if !path.starts_with(GEMINI_MODELS_PREFIX) {
-        return false;
-    }
-    path.ends_with(GEMINI_GENERATE_SUFFIX) || path.ends_with(GEMINI_STREAM_SUFFIX)
-}
-
-fn is_gemini_stream_path(path: &str) -> bool {
-    path.starts_with(GEMINI_MODELS_PREFIX) && path.ends_with(GEMINI_STREAM_SUFFIX)
-}
-
-fn parse_gemini_model_from_path(path: &str) -> Option<String> {
-    let rest = path.strip_prefix(GEMINI_MODELS_PREFIX)?;
-    let (model, _) = rest.split_once(':')?;
-    let model = model.trim();
-    if model.is_empty() {
-        None
-    } else {
-        Some(model.to_string())
-    }
-}
-
 async fn parse_request_meta_best_effort(path: &str, body: &ReplayableBody) -> RequestMeta {
-    let stream_from_path = is_gemini_stream_path(path);
-    let model_from_path = parse_gemini_model_from_path(path);
+    let stream_from_path = gemini::is_gemini_stream_path(path);
+    let model_from_path = gemini::parse_gemini_model_from_path(path);
 
     let Some(bytes) = body
         .read_bytes_if_small(REQUEST_META_LIMIT_BYTES)
@@ -322,7 +298,8 @@ async fn parse_request_meta_best_effort(path: &str, body: &ReplayableBody) -> Re
     else {
         return RequestMeta {
             stream: stream_from_path,
-            model: model_from_path,
+            original_model: model_from_path,
+            mapped_model: None,
         };
     };
     let value: Value = match serde_json::from_slice(&bytes) {
@@ -330,7 +307,8 @@ async fn parse_request_meta_best_effort(path: &str, body: &ReplayableBody) -> Re
         Err(_) => {
             return RequestMeta {
                 stream: stream_from_path,
-                model: model_from_path,
+                original_model: model_from_path,
+                mapped_model: None,
             }
         }
     };
@@ -339,12 +317,16 @@ async fn parse_request_meta_best_effort(path: &str, body: &ReplayableBody) -> Re
         .and_then(Value::as_bool)
         .unwrap_or(false)
         || stream_from_path;
-    let model = value
+    let original_model = value
         .get("model")
         .and_then(Value::as_str)
         .map(|value| value.to_string());
-    let model = model.or(model_from_path);
-    RequestMeta { stream, model }
+    let original_model = original_model.or(model_from_path);
+    RequestMeta {
+        stream,
+        original_model,
+        mapped_model: None,
+    }
 }
 
 async fn maybe_transform_request_body(
@@ -504,7 +486,8 @@ mod tests {
             let input = Bytes::from_static(br#"{"stream":true,"messages":[]}"#);
             let meta = RequestMeta {
                 stream: true,
-                model: None,
+                original_model: None,
+                mapped_model: None,
             };
             let body = ReplayableBody::from_bytes(input);
             let output = maybe_force_openai_stream_options_include_usage(
@@ -553,6 +536,6 @@ mod tests {
             &body,
         ));
         assert!(meta.stream);
-        assert_eq!(meta.model.as_deref(), Some("gemini-1.5-flash"));
+        assert_eq!(meta.original_model.as_deref(), Some("gemini-1.5-flash"));
     }
 }

@@ -28,7 +28,12 @@ Example:
       "api_key": null,
       "priority": 0,
       "index": 0,
-      "enabled": true
+      "enabled": true,
+      "model_mappings": {
+        "gpt-4": "gpt-4.1",
+        "gpt-4*": "gpt-4.1-mini",
+        "*": "gpt-4.1-mini"
+      }
     },
     {
       "id": "openai-responses",
@@ -68,3 +73,4 @@ Notes:
 - `priority` sorts descending; `index` sorts ascending inside the same priority group.
 - Missing `index` values are auto-assigned globally after the current max index when saving.
 - `enabled` disables an upstream without deleting it; disabled upstreams are ignored during load balancing.
+- `model_mappings` rewrites model names per upstream (exact match, prefix with `*`, wildcard `*`). Priority: exact > prefix > wildcard. Responses return the original model alias when a mapping applies.

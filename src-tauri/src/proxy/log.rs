@@ -28,6 +28,7 @@ pub(crate) struct LogEntry {
     pub(crate) provider: String,
     pub(crate) upstream_id: String,
     pub(crate) model: Option<String>,
+    pub(crate) mapped_model: Option<String>,
     pub(crate) stream: bool,
     pub(crate) status: u16,
     pub(crate) usage: Option<TokenUsage>,
@@ -43,6 +44,7 @@ pub(crate) struct LogContext {
     pub(crate) provider: String,
     pub(crate) upstream_id: String,
     pub(crate) model: Option<String>,
+    pub(crate) mapped_model: Option<String>,
     pub(crate) stream: bool,
     pub(crate) status: u16,
     pub(crate) upstream_request_id: Option<String>,
@@ -100,6 +102,7 @@ pub(crate) fn build_log_entry(context: &LogContext, usage: UsageSnapshot) -> Log
         provider: context.provider.clone(),
         upstream_id: context.upstream_id.clone(),
         model: context.model.clone(),
+        mapped_model: context.mapped_model.clone(),
         stream: context.stream,
         status: context.status,
         usage: usage.usage,
@@ -133,6 +136,7 @@ INSERT INTO request_logs (
   provider,
   upstream_id,
   model,
+  mapped_model,
   stream,
   status,
   input_tokens,
@@ -142,7 +146,7 @@ INSERT INTO request_logs (
   usage_json,
   upstream_request_id,
   latency_ms
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 "#,
     )
     .bind(to_i64_u128(entry.ts_ms))
@@ -150,6 +154,7 @@ INSERT INTO request_logs (
     .bind(entry.provider.as_str())
     .bind(entry.upstream_id.as_str())
     .bind(entry.model.as_deref())
+    .bind(entry.mapped_model.as_deref())
     .bind(entry.stream)
     .bind(i64::from(entry.status))
     .bind(input_tokens)

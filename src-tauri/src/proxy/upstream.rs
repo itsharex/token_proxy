@@ -20,14 +20,19 @@ const GEMINI_API_KEY_HEADER: HeaderName = HeaderName::from_static("x-goog-api-ke
 
 use super::{
     config::{UpstreamRuntime, UpstreamStrategy},
+    gemini,
     http,
     http::RequestAuth,
+    log::LogWriter,
+    model,
     openai_compat::FormatTransform,
     request_body::ReplayableBody,
     response::{build_proxy_response, build_proxy_response_buffered},
     ProxyState,
     RequestMeta,
 };
+
+const REQUEST_MODEL_MAPPING_LIMIT_BYTES: usize = 4 * 1024 * 1024;
 
 pub(super) async fn forward_upstream_request(
     state: Arc<ProxyState>,
@@ -114,6 +119,13 @@ enum AttemptOutcome {
     SkippedAuth,
 }
 
+struct PreparedUpstreamRequest {
+    upstream_url: String,
+    request_headers: HeaderMap,
+    upstream_body: reqwest::Body,
+    meta: RequestMeta,
+}
+
 async fn try_group_upstreams(
     state: &ProxyState,
     method: Method,
@@ -195,57 +207,108 @@ async fn attempt_upstream(
     request_auth: &RequestAuth,
     response_transform: FormatTransform,
 ) -> AttemptOutcome {
-    let upstream_url = upstream.upstream_url(upstream_path_with_query);
-    let (upstream_url, auth) = match provider {
-        "gemini" => match resolve_gemini_upstream(upstream, request_auth, upstream_path_with_query, &upstream_url) {
-            Ok(value) => value,
-            Err(outcome) => return outcome,
-        },
-        _ => {
-            let auth = match http::resolve_upstream_auth(provider, upstream, request_auth) {
-                Ok(Some(auth)) => auth,
-                Ok(None) => return AttemptOutcome::SkippedAuth,
-                Err(response) => return AttemptOutcome::Fatal(response),
-            };
-            (upstream_url, auth)
-        }
+    let prepared = match prepare_upstream_request(
+        provider,
+        upstream,
+        upstream_path_with_query,
+        headers,
+        body,
+        meta,
+        request_auth,
+    )
+    .await
+    {
+        Ok(prepared) => prepared,
+        Err(outcome) => return outcome,
     };
-    let mut request_headers = http::build_upstream_headers(headers, auth);
-    if provider == "anthropic" && !request_headers.contains_key(ANTHROPIC_VERSION_HEADER) {
-        // Anthropic 官方 API 需要 `anthropic-version`；缺省时补一个稳定默认值，允许客户端覆盖。
-        request_headers.insert(
-            ANTHROPIC_VERSION_HEADER,
-            HeaderValue::from_static(DEFAULT_ANTHROPIC_VERSION),
-        );
-    }
     let start_time = Instant::now();
-
-    let upstream_body = match body.to_reqwest_body().await {
-        Ok(body) => body,
-        Err(err) => {
-            return AttemptOutcome::Fatal(http::error_response(
-                StatusCode::BAD_GATEWAY,
-                format!("Failed to read cached request body: {err}"),
-            ))
-        }
-    };
-
     let upstream_res = state
         .client
-        .request(method, upstream_url)
-        .headers(request_headers)
-        .body(upstream_body)
+        .request(method, prepared.upstream_url)
+        .headers(prepared.request_headers)
+        .body(prepared.upstream_body)
         .send()
         .await;
+    handle_upstream_result(
+        upstream_res,
+        &prepared.meta,
+        provider,
+        &upstream.id,
+        inbound_path,
+        state.log.clone(),
+        start_time,
+        response_transform,
+    )
+    .await
+}
+
+async fn prepare_upstream_request(
+    provider: &str,
+    upstream: &UpstreamRuntime,
+    upstream_path_with_query: &str,
+    headers: &HeaderMap,
+    body: &ReplayableBody,
+    meta: &RequestMeta,
+    request_auth: &RequestAuth,
+) -> Result<PreparedUpstreamRequest, AttemptOutcome> {
+    let mapped_meta = build_mapped_meta(meta, upstream);
+    let upstream_path_with_query =
+        resolve_upstream_path_with_query(provider, upstream_path_with_query, &mapped_meta);
+    let upstream_url = upstream.upstream_url(&upstream_path_with_query);
+    let (upstream_url, auth) = resolve_upstream_auth(
+        provider,
+        upstream,
+        request_auth,
+        &upstream_path_with_query,
+        &upstream_url,
+    )?;
+    let request_headers = build_request_headers(provider, headers, auth);
+    let upstream_body = build_upstream_body(body, &mapped_meta).await?;
+    Ok(PreparedUpstreamRequest {
+        upstream_url,
+        request_headers,
+        upstream_body,
+        meta: mapped_meta,
+    })
+}
+
+fn resolve_upstream_auth(
+    provider: &str,
+    upstream: &UpstreamRuntime,
+    request_auth: &RequestAuth,
+    upstream_path_with_query: &str,
+    upstream_url: &str,
+) -> Result<(String, http::UpstreamAuthHeader), AttemptOutcome> {
+    if provider == "gemini" {
+        return resolve_gemini_upstream(upstream, request_auth, upstream_path_with_query, upstream_url);
+    }
+    let auth = match http::resolve_upstream_auth(provider, upstream, request_auth) {
+        Ok(Some(auth)) => auth,
+        Ok(None) => return Err(AttemptOutcome::SkippedAuth),
+        Err(response) => return Err(AttemptOutcome::Fatal(response)),
+    };
+    Ok((upstream_url.to_string(), auth))
+}
+
+async fn handle_upstream_result(
+    upstream_res: Result<reqwest::Response, reqwest::Error>,
+    meta: &RequestMeta,
+    provider: &str,
+    upstream_id: &str,
+    inbound_path: &str,
+    log: Arc<LogWriter>,
+    start_time: Instant,
+    response_transform: FormatTransform,
+) -> AttemptOutcome {
     match upstream_res {
         Ok(res) if is_retryable_status(res.status()) => {
             let response = build_proxy_response_buffered(
                 meta,
                 provider,
-                &upstream.id,
+                upstream_id,
                 inbound_path,
                 res,
-                state.log.clone(),
+                log,
                 start_time,
                 response_transform,
             )
@@ -259,10 +322,10 @@ async fn attempt_upstream(
             let response = build_proxy_response(
                 meta,
                 provider,
-                &upstream.id,
+                upstream_id,
                 inbound_path,
                 res,
-                state.log.clone(),
+                log,
                 start_time,
                 response_transform,
             )
@@ -278,6 +341,106 @@ async fn attempt_upstream(
             format!("Upstream request failed: {}", sanitize_upstream_error(provider, &err)),
         )),
     }
+}
+
+fn build_mapped_meta(meta: &RequestMeta, upstream: &UpstreamRuntime) -> RequestMeta {
+    let mapped_model = meta
+        .original_model
+        .as_deref()
+        .map(|original| upstream.map_model(original).unwrap_or_else(|| original.to_string()));
+    RequestMeta {
+        stream: meta.stream,
+        original_model: meta.original_model.clone(),
+        mapped_model,
+    }
+}
+
+fn resolve_upstream_path_with_query(
+    provider: &str,
+    upstream_path_with_query: &str,
+    meta: &RequestMeta,
+) -> String {
+    if provider != "gemini" || meta.model_override().is_none() {
+        return upstream_path_with_query.to_string();
+    }
+    let Some(mapped_model) = meta.mapped_model.as_deref() else {
+        return upstream_path_with_query.to_string();
+    };
+    let (path, query) = split_path_query(upstream_path_with_query);
+    let replaced = gemini::replace_gemini_model_in_path(path, mapped_model)
+        .unwrap_or_else(|| path.to_string());
+    match query {
+        Some(query) => format!("{replaced}?{query}"),
+        None => replaced,
+    }
+}
+
+fn split_path_query(path_with_query: &str) -> (&str, Option<&str>) {
+    match path_with_query.split_once('?') {
+        Some((path, query)) => (path, Some(query)),
+        None => (path_with_query, None),
+    }
+}
+
+fn build_request_headers(
+    provider: &str,
+    headers: &HeaderMap,
+    auth: http::UpstreamAuthHeader,
+) -> HeaderMap {
+    let mut request_headers = http::build_upstream_headers(headers, auth);
+    if provider == "anthropic" && !request_headers.contains_key(ANTHROPIC_VERSION_HEADER) {
+        // Anthropic 官方 API 需要 `anthropic-version`；缺省时补一个稳定默认值，允许客户端覆盖。
+        request_headers.insert(
+            ANTHROPIC_VERSION_HEADER,
+            HeaderValue::from_static(DEFAULT_ANTHROPIC_VERSION),
+        );
+    }
+    request_headers
+}
+
+async fn build_upstream_body(
+    body: &ReplayableBody,
+    meta: &RequestMeta,
+) -> Result<reqwest::Body, AttemptOutcome> {
+    let mapped_body = maybe_rewrite_request_body_model(body, meta).await?;
+    let source = mapped_body.as_ref().unwrap_or(body);
+    source
+        .to_reqwest_body()
+        .await
+        .map_err(|err| {
+            AttemptOutcome::Fatal(http::error_response(
+                StatusCode::BAD_GATEWAY,
+                format!("Failed to read cached request body: {err}"),
+            ))
+        })
+}
+
+async fn maybe_rewrite_request_body_model(
+    body: &ReplayableBody,
+    meta: &RequestMeta,
+) -> Result<Option<ReplayableBody>, AttemptOutcome> {
+    if meta.model_override().is_none() {
+        return Ok(None);
+    }
+    let Some(mapped_model) = meta.mapped_model.as_deref() else {
+        return Ok(None);
+    };
+    let Some(bytes) = body
+        .read_bytes_if_small(REQUEST_MODEL_MAPPING_LIMIT_BYTES)
+        .await
+        .map_err(|err| {
+            AttemptOutcome::Fatal(http::error_response(
+                StatusCode::BAD_GATEWAY,
+                format!("Failed to read request body: {err}"),
+            ))
+        })?
+    else {
+        return Ok(None);
+    };
+    let Some(rewritten) = model::rewrite_request_model(&bytes, mapped_model) else {
+        return Ok(None);
+    };
+    Ok(Some(ReplayableBody::from_bytes(rewritten)))
 }
 
 fn resolve_gemini_upstream(

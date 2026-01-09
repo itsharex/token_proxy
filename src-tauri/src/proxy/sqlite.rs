@@ -50,6 +50,7 @@ CREATE TABLE IF NOT EXISTS request_logs (
   provider TEXT NOT NULL,
   upstream_id TEXT NOT NULL,
   model TEXT,
+  mapped_model TEXT,
   stream INTEGER NOT NULL,
   status INTEGER NOT NULL,
   input_tokens INTEGER,
@@ -97,6 +98,13 @@ async fn ensure_request_logs_columns(pool: &SqlitePool) -> Result<(), String> {
             .execute(pool)
             .await
             .map_err(|err| format!("Failed to add cached_tokens column: {err}"))?;
+    }
+
+    if !columns.contains("mapped_model") {
+        sqlx::query("ALTER TABLE request_logs ADD COLUMN mapped_model TEXT;")
+            .execute(pool)
+            .await
+            .map_err(|err| format!("Failed to add mapped_model column: {err}"))?;
     }
 
     if !columns.contains("usage_json") {

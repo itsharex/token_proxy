@@ -1,0 +1,343 @@
+use serde::{Deserialize, Serialize};
+use std::{
+    collections::HashMap,
+    path::PathBuf,
+};
+
+use super::model_mapping::ModelMappingRules;
+
+fn default_enabled() -> bool {
+    true
+}
+
+fn default_proxy_port() -> u16 {
+    // Dev 与安装包需要可并行运行；debug 默认换一个端口，避免与 release/安装包冲突。
+    if cfg!(debug_assertions) {
+        19208
+    } else {
+        9208
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum UpstreamStrategy {
+    PriorityRoundRobin,
+    PriorityFillFirst,
+}
+
+impl Default for UpstreamStrategy {
+    fn default() -> Self {
+        Self::PriorityRoundRobin
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub(crate) struct UpstreamConfig {
+    pub(crate) id: String,
+    pub(crate) provider: String,
+    pub(crate) base_url: String,
+    pub(crate) api_key: Option<String>,
+    pub(crate) priority: Option<i32>,
+    pub(crate) index: Option<i32>,
+    #[serde(default = "default_enabled")]
+    pub(crate) enabled: bool,
+    #[serde(default)]
+    pub(crate) model_mappings: HashMap<String, String>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub(crate) struct ProxyConfigFile {
+    pub(crate) host: String,
+    pub(crate) port: u16,
+    pub(crate) local_api_key: Option<String>,
+    pub(crate) log_path: String,
+    /// 是否允许在 OpenAI Chat Completions 与 Responses API 之间自动互转。
+    /// 默认为关闭；关闭时将严格按 provider 路由，不做格式转换。
+    #[serde(default)]
+    pub(crate) enable_api_format_conversion: bool,
+    #[serde(default)]
+    pub(crate) upstream_strategy: UpstreamStrategy,
+    #[serde(default)]
+    pub(crate) upstreams: Vec<UpstreamConfig>,
+}
+
+impl Default for ProxyConfigFile {
+    fn default() -> Self {
+        Self {
+            host: "127.0.0.1".to_string(),
+            port: default_proxy_port(),
+            local_api_key: None,
+            log_path: "proxy.log".to_string(),
+            enable_api_format_conversion: false,
+            upstream_strategy: UpstreamStrategy::PriorityRoundRobin,
+            upstreams: vec![
+                UpstreamConfig {
+                    id: "openai-default".to_string(),
+                    provider: "openai".to_string(),
+                    base_url: "https://api.openai.com".to_string(),
+                    api_key: None,
+                    priority: Some(0),
+                    index: Some(0),
+                    enabled: true,
+                    model_mappings: HashMap::new(),
+                },
+                UpstreamConfig {
+                    id: "openai-responses".to_string(),
+                    provider: "openai-response".to_string(),
+                    base_url: "https://api.openai.com".to_string(),
+                    api_key: None,
+                    priority: Some(0),
+                    index: Some(1),
+                    enabled: true,
+                    model_mappings: HashMap::new(),
+                },
+                UpstreamConfig {
+                    id: "anthropic-default".to_string(),
+                    provider: "anthropic".to_string(),
+                    base_url: "https://api.anthropic.com".to_string(),
+                    api_key: None,
+                    priority: Some(0),
+                    index: Some(2),
+                    enabled: true,
+                    model_mappings: HashMap::new(),
+                },
+                UpstreamConfig {
+                    id: "gemini-default".to_string(),
+                    provider: "gemini".to_string(),
+                    base_url: "https://generativelanguage.googleapis.com".to_string(),
+                    api_key: None,
+                    priority: Some(0),
+                    index: Some(3),
+                    enabled: true,
+                    model_mappings: HashMap::new(),
+                },
+            ],
+        }
+    }
+}
+
+#[derive(Clone)]
+pub(crate) struct ProxyConfig {
+    pub(crate) host: String,
+    pub(crate) port: u16,
+    pub(crate) local_api_key: Option<String>,
+    pub(crate) log_path: PathBuf,
+    pub(crate) enable_api_format_conversion: bool,
+    pub(crate) upstream_strategy: UpstreamStrategy,
+    pub(crate) upstreams: HashMap<String, ProviderUpstreams>,
+}
+
+#[derive(Clone)]
+pub(crate) struct ProviderUpstreams {
+    pub(crate) groups: Vec<UpstreamGroup>,
+}
+
+#[derive(Clone)]
+pub(crate) struct UpstreamGroup {
+    pub(crate) priority: i32,
+    pub(crate) items: Vec<UpstreamRuntime>,
+}
+
+#[derive(Clone)]
+pub(crate) struct UpstreamRuntime {
+    pub(crate) id: String,
+    pub(crate) base_url: String,
+    pub(crate) api_key: Option<String>,
+    pub(crate) priority: i32,
+    pub(crate) index: i32,
+    pub(crate) model_mappings: Option<ModelMappingRules>,
+    pub(crate) order: usize,
+}
+
+impl UpstreamRuntime {
+    /// 构建上游请求 URL，智能处理 base_url 与 path 的路径重叠
+    /// 例如：base_url = "https://example.com/openai/v1", path = "/v1/chat/completions"
+    /// 结果：https://example.com/openai/v1/chat/completions（去掉重复的 /v1）
+    pub(crate) fn upstream_url(&self, path: &str) -> String {
+        let base = self.base_url.trim_end_matches('/');
+        let effective_path = strip_overlapping_prefix(base, path);
+        format!("{base}{effective_path}")
+    }
+
+    pub(crate) fn map_model(&self, model: &str) -> Option<String> {
+        self.model_mappings
+            .as_ref()
+            .and_then(|rules| rules.map_model(model))
+            .map(|value| value.to_string())
+    }
+
+    pub(crate) fn order(&self) -> usize {
+        self.order
+    }
+}
+
+#[derive(Serialize)]
+pub(crate) struct ConfigResponse {
+    pub(crate) path: String,
+    pub(crate) config: ProxyConfigFile,
+}
+
+/// 去掉 path 开头与 base_url 路径部分重叠的前缀
+/// base_url: "https://example.com/openai/v1" -> base_path: "/openai/v1"
+/// 如果 path 以 base_path 的某个后缀开头（如 "/v1"），则去掉该重叠部分
+pub(crate) fn strip_overlapping_prefix<'a>(base_url: &str, path: &'a str) -> &'a str {
+    let Some(base_path) = url::Url::parse(base_url)
+        .ok()
+        .map(|url| url.path().to_string())
+    else {
+        return path;
+    };
+    // 检查 base_path 的每个后缀是否与 path 的前缀重叠
+    // 例如 base_path = "/openai/v1"，依次检查 "/openai/v1", "/v1"
+    let base_path = base_path.trim_end_matches('/');
+    for (idx, ch) in base_path.char_indices() {
+        if ch == '/' {
+            let suffix = &base_path[idx..];
+            if path.starts_with(suffix) {
+                return &path[suffix.len()..];
+            }
+        }
+    }
+    // 完整匹配检查（base_path 本身）
+    if path.starts_with(base_path) {
+        return &path[base_path.len()..];
+    }
+    path
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_strip_overlapping_prefix() {
+        // 标准 OpenAI 兼容格式：base_url 包含 /v1
+        assert_eq!(
+            strip_overlapping_prefix("https://api.example.com/openai/v1", "/v1/chat/completions"),
+            "/chat/completions"
+        );
+        assert_eq!(
+            strip_overlapping_prefix("https://api.example.com/v1", "/v1/chat/completions"),
+            "/chat/completions"
+        );
+
+        // 无重叠情况：base_url 不包含路径
+        assert_eq!(
+            strip_overlapping_prefix("https://api.openai.com", "/v1/chat/completions"),
+            "/v1/chat/completions"
+        );
+
+        // 无重叠情况：base_url 路径与请求路径无公共后缀
+        assert_eq!(
+            strip_overlapping_prefix("https://api.example.com/openai/", "/v1/chat/completions"),
+            "/v1/chat/completions"
+        );
+        assert_eq!(
+            strip_overlapping_prefix("https://api.example.com/openai", "/v1/chat/completions"),
+            "/v1/chat/completions"
+        );
+
+        // 多层路径重叠
+        assert_eq!(
+            strip_overlapping_prefix("https://example.com/api/openai/v1", "/v1/models"),
+            "/models"
+        );
+
+        // 完整路径重叠
+        assert_eq!(
+            strip_overlapping_prefix("https://example.com/openai/v1", "/openai/v1/completions"),
+            "/completions"
+        );
+
+        // 带尾斜杠的 base_url
+        assert_eq!(
+            strip_overlapping_prefix("https://example.com/v1/", "/v1/chat/completions"),
+            "/chat/completions"
+        );
+
+        // 无效 URL 回退
+        assert_eq!(
+            strip_overlapping_prefix("not-a-valid-url", "/v1/chat/completions"),
+            "/v1/chat/completions"
+        );
+    }
+
+    #[test]
+    fn test_upstream_url() {
+        // openai provider: /v1/chat/completions
+        let upstream = UpstreamRuntime {
+            id: "test".to_string(),
+            base_url: "https://api.example.com/openai/v1".to_string(),
+            api_key: None,
+            priority: 0,
+            index: 0,
+            model_mappings: None,
+            order: 0,
+        };
+        assert_eq!(
+            upstream.upstream_url("/v1/chat/completions"),
+            "https://api.example.com/openai/v1/chat/completions"
+        );
+
+        // openai-response provider: /v1/responses
+        let upstream_responses = UpstreamRuntime {
+            id: "test".to_string(),
+            base_url: "https://api.example.com/openai/v1".to_string(),
+            api_key: None,
+            priority: 0,
+            index: 0,
+            model_mappings: None,
+            order: 0,
+        };
+        assert_eq!(
+            upstream_responses.upstream_url("/v1/responses"),
+            "https://api.example.com/openai/v1/responses"
+        );
+
+        // 无路径前缀的 base_url
+        let upstream_no_path = UpstreamRuntime {
+            id: "test".to_string(),
+            base_url: "https://api.openai.com".to_string(),
+            api_key: None,
+            priority: 0,
+            index: 0,
+            model_mappings: None,
+            order: 0,
+        };
+        assert_eq!(
+            upstream_no_path.upstream_url("/v1/chat/completions"),
+            "https://api.openai.com/v1/chat/completions"
+        );
+        assert_eq!(
+            upstream_no_path.upstream_url("/v1/responses"),
+            "https://api.openai.com/v1/responses"
+        );
+
+        // 带尾斜杠的 base_url
+        let upstream_trailing_slash = UpstreamRuntime {
+            id: "test".to_string(),
+            base_url: "https://api.example.com/openai/v1/".to_string(),
+            api_key: None,
+            priority: 0,
+            index: 0,
+            model_mappings: None,
+            order: 0,
+        };
+        // openai: /v1/chat/completions
+        assert_eq!(
+            upstream_trailing_slash.upstream_url("/v1/chat/completions"),
+            "https://api.example.com/openai/v1/chat/completions"
+        );
+        // openai-response: /v1/responses
+        assert_eq!(
+            upstream_trailing_slash.upstream_url("/v1/responses"),
+            "https://api.example.com/openai/v1/responses"
+        );
+        // anthropic: /v1/messages
+        assert_eq!(
+            upstream_trailing_slash.upstream_url("/v1/messages"),
+            "https://api.example.com/openai/v1/messages"
+        );
+    }
+}

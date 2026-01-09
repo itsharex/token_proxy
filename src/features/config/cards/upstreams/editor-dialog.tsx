@@ -10,6 +10,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { PasswordInput } from "@/components/ui/password-input";
@@ -22,7 +23,7 @@ import {
 } from "@/components/ui/select";
 import { getUpstreamLabel } from "@/features/config/cards/upstreams/constants";
 import type { UpstreamEditorState } from "@/features/config/cards/upstreams/types";
-import type { UpstreamForm } from "@/features/config/types";
+import type { ModelMappingForm, UpstreamForm } from "@/features/config/types";
 import { m } from "@/paraglide/messages.js";
 
 type EditorFieldProps = {
@@ -45,6 +46,74 @@ function EditorField({ label, htmlFor, children }: EditorFieldProps) {
   );
 }
 
+type ModelMappingsEditorProps = {
+  mappings: ModelMappingForm[];
+  onChange: (next: ModelMappingForm[]) => void;
+};
+
+function ModelMappingsEditor({ mappings, onChange }: ModelMappingsEditorProps) {
+  const handleAdd = () => {
+    onChange([...mappings, { pattern: "", target: "" }]);
+  };
+
+  const handleUpdate = (index: number, patch: Partial<ModelMappingForm>) => {
+    onChange(
+      mappings.map((mapping, current) =>
+        current === index ? { ...mapping, ...patch } : mapping,
+      ),
+    );
+  };
+
+  const handleRemove = (index: number) => {
+    onChange(mappings.filter((_, current) => current !== index));
+  };
+
+  return (
+    <div data-slot="model-mappings" className="space-y-2">
+      {mappings.length ? (
+        <>
+          <div className="grid grid-cols-[1fr_1fr_auto] gap-2 text-xs text-muted-foreground">
+            <span>{m.field_model_mapping_pattern()}</span>
+            <span>{m.field_model_mapping_target()}</span>
+            <span className="sr-only">{m.model_mappings_remove()}</span>
+          </div>
+          {mappings.map((mapping, index) => (
+            <div key={`${mapping.pattern}-${index}`} className="grid grid-cols-[1fr_1fr_auto] gap-2">
+              <Input
+                value={mapping.pattern}
+                onChange={(e) => handleUpdate(index, { pattern: e.target.value })}
+                placeholder={m.model_mappings_placeholder_pattern()}
+              />
+              <Input
+                value={mapping.target}
+                onChange={(e) => handleUpdate(index, { target: e.target.value })}
+                placeholder={m.model_mappings_placeholder_target()}
+              />
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                aria-label={m.model_mappings_remove()}
+                onClick={() => handleRemove(index)}
+              >
+                x
+              </Button>
+            </div>
+          ))}
+        </>
+      ) : (
+        <p className="text-xs text-muted-foreground">{m.model_mappings_empty()}</p>
+      )}
+      <div className="flex flex-wrap items-center gap-2">
+        <Button type="button" variant="secondary" size="sm" onClick={handleAdd}>
+          {m.model_mappings_add()}
+        </Button>
+        <span className="text-xs text-muted-foreground">{m.model_mappings_tip()}</span>
+      </div>
+    </div>
+  );
+}
+
 type UpstreamEditorFieldsProps = {
   draft: UpstreamForm;
   providerOptions: readonly string[];
@@ -53,15 +122,15 @@ type UpstreamEditorFieldsProps = {
   onChangeDraft: (patch: Partial<UpstreamForm>) => void;
 };
 
-function UpstreamEditorFields({
-  draft,
-  providerOptions,
-  showApiKeys,
-  onToggleApiKeys,
-  onChangeDraft,
-}: UpstreamEditorFieldsProps) {
+type UpstreamIdentityFieldsProps = {
+  draft: UpstreamForm;
+  providerOptions: readonly string[];
+  onChangeDraft: (patch: Partial<UpstreamForm>) => void;
+};
+
+function UpstreamIdentityFields({ draft, providerOptions, onChangeDraft }: UpstreamIdentityFieldsProps) {
   return (
-    <div className="grid grid-cols-[auto_1fr] items-center gap-x-3 gap-y-4">
+    <div data-slot="upstream-identity-fields" className="contents">
       <EditorField label={m.field_id()} htmlFor="upstream-editor-id">
         <Input
           id="upstream-editor-id"
@@ -114,7 +183,25 @@ function UpstreamEditorFields({
           placeholder="https://api.openai.com"
         />
       </EditorField>
+    </div>
+  );
+}
 
+type UpstreamAuthFieldsProps = {
+  draft: UpstreamForm;
+  showApiKeys: boolean;
+  onToggleApiKeys: () => void;
+  onChangeDraft: (patch: Partial<UpstreamForm>) => void;
+};
+
+function UpstreamAuthFields({
+  draft,
+  showApiKeys,
+  onToggleApiKeys,
+  onChangeDraft,
+}: UpstreamAuthFieldsProps) {
+  return (
+    <div data-slot="upstream-auth-fields" className="contents">
       <EditorField label={m.field_api_key()} htmlFor="upstream-editor-apiKey">
         <PasswordInput
           id="upstream-editor-apiKey"
@@ -125,7 +212,18 @@ function UpstreamEditorFields({
           placeholder={m.common_optional()}
         />
       </EditorField>
+    </div>
+  );
+}
 
+type UpstreamOrderFieldsProps = {
+  draft: UpstreamForm;
+  onChangeDraft: (patch: Partial<UpstreamForm>) => void;
+};
+
+function UpstreamOrderFields({ draft, onChangeDraft }: UpstreamOrderFieldsProps) {
+  return (
+    <div data-slot="upstream-order-fields" className="contents">
       {/* Priority 和 Index 并排：四列布局 */}
       <Label htmlFor="upstream-editor-priority">{m.field_priority()}</Label>
       <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3">
@@ -145,6 +243,52 @@ function UpstreamEditorFields({
           inputMode="numeric"
         />
       </div>
+    </div>
+  );
+}
+
+type UpstreamModelMappingFieldsProps = {
+  draft: UpstreamForm;
+  onChangeDraft: (patch: Partial<UpstreamForm>) => void;
+};
+
+function UpstreamModelMappingFields({ draft, onChangeDraft }: UpstreamModelMappingFieldsProps) {
+  return (
+    <div data-slot="upstream-model-mapping-fields" className="contents">
+      <Label className="self-start">{m.field_model_mappings()}</Label>
+      <ModelMappingsEditor
+        mappings={draft.modelMappings}
+        onChange={(next) => onChangeDraft({ modelMappings: next })}
+      />
+    </div>
+  );
+}
+
+function UpstreamEditorFields({
+  draft,
+  providerOptions,
+  showApiKeys,
+  onToggleApiKeys,
+  onChangeDraft,
+}: UpstreamEditorFieldsProps) {
+  return (
+    <div
+      data-slot="upstream-editor-fields"
+      className="grid grid-cols-[auto_1fr] items-center gap-x-3 gap-y-4"
+    >
+      <UpstreamIdentityFields
+        draft={draft}
+        providerOptions={providerOptions}
+        onChangeDraft={onChangeDraft}
+      />
+      <UpstreamAuthFields
+        draft={draft}
+        showApiKeys={showApiKeys}
+        onToggleApiKeys={onToggleApiKeys}
+        onChangeDraft={onChangeDraft}
+      />
+      <UpstreamOrderFields draft={draft} onChangeDraft={onChangeDraft} />
+      <UpstreamModelMappingFields draft={draft} onChangeDraft={onChangeDraft} />
     </div>
   );
 }

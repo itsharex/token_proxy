@@ -15,6 +15,7 @@ export type UpstreamConfig = {
   priority: number | null;
   index: number | null;
   enabled: boolean;
+  model_mappings: Record<string, string>;
 };
 
 export type ProxyConfigFile = {
@@ -48,6 +49,12 @@ export type UpstreamForm = {
   priority: string;
   index: string;
   enabled: boolean;
+  modelMappings: ModelMappingForm[];
+};
+
+export type ModelMappingForm = {
+  pattern: string;
+  target: string;
 };
 
 export type ConfigForm = {

@@ -1,8 +1,10 @@
 pub(crate) mod config;
 pub(crate) mod dashboard;
 pub(crate) mod service;
+mod gemini;
 mod http;
 mod log;
+mod model;
 mod openai_compat;
 mod request_body;
 mod response;
@@ -26,5 +28,18 @@ struct ProxyState {
 
 struct RequestMeta {
     stream: bool,
-    model: Option<String>,
+    original_model: Option<String>,
+    mapped_model: Option<String>,
+}
+
+impl RequestMeta {
+    fn model_override(&self) -> Option<&str> {
+        match (
+            self.original_model.as_deref(),
+            self.mapped_model.as_deref(),
+        ) {
+            (Some(original), Some(mapped)) if original != mapped => Some(original),
+            _ => None,
+        }
+    }
 }

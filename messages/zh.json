@@ -91,6 +91,15 @@
   "field_api_key": "API Key",
   "field_priority": "Priority",
   "field_index": "Index",
+  "field_model_mappings": "模型映射",
+  "field_model_mapping_pattern": "匹配模式",
+  "field_model_mapping_target": "目标模型",
+  "model_mappings_add": "添加映射",
+  "model_mappings_remove": "删除映射",
+  "model_mappings_empty": "暂无映射。",
+  "model_mappings_tip": "精确：gpt-4，前缀：gpt-4*，通配：*（优先级：精确 > 前缀 > 通配）。",
+  "model_mappings_placeholder_pattern": "gpt-4*",
+  "model_mappings_placeholder_target": "gpt-4.1",
   "upstreams_delete_title": "删除上游？",
   "upstreams_delete_description": "将删除 {rowLabel}。",
   "upstreams_columns_title": "可见列",
@@ -181,5 +190,11 @@
   "error_upstream_provider_required": "上游 {id} 的 provider 为必填。",
   "error_upstream_base_url_required": "上游 {id} 的 base URL 为必填。",
   "error_upstream_priority_integer": "上游 {id} 的 priority 必须是整数。",
-  "error_upstream_index_integer": "上游 {id} 的 index 必须是整数。"
+  "error_upstream_index_integer": "上游 {id} 的 index 必须是整数。",
+  "error_model_mapping_pattern_required": "上游 {id} 第 {row} 行映射的匹配模式不能为空。",
+  "error_model_mapping_target_required": "上游 {id} 第 {row} 行映射的目标模型不能为空。",
+  "error_model_mapping_pattern_duplicate": "上游 {id} 映射重复的匹配模式：{pattern}。",
+  "error_model_mapping_pattern_invalid": "上游 {id} 映射匹配模式无效：{pattern}。",
+  "error_model_mapping_wildcard_multiple": "上游 {id} 只能定义一个通配映射“*”。",
+  "error_model_mapping_prefix_required": "上游 {id} 第 {row} 行映射的前缀不能为空。"
 }
