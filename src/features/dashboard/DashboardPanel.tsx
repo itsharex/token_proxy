@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import { AlertCircle } from "lucide-react"
 
 import { ChartAreaInteractive, type DashboardTimeRange } from "@/components/chart-area-interactive"
@@ -20,19 +20,39 @@ function resolveRange(preset: DashboardTimeRange) {
   return { fromTsMs: now - days * 24 * 60 * 60 * 1000, toTsMs: now }
 }
 
-function derivePagination(snapshot: DashboardSnapshot | null, page: number) {
-  const totalRequests = snapshot?.summary.totalRequests ?? 0
+function usePagination(totalRequests: number) {
+  const [page, setPage] = useState(1)
   const totalPages = Math.max(1, Math.ceil(totalRequests / RECENT_PAGE_SIZE))
-  const safePage = Math.min(Math.max(1, page), totalPages)
-  return { totalRequests, totalPages, page: safePage }
+
+  useEffect(() => {
+    if (page > totalPages) {
+      setPage(totalPages)
+    }
+  }, [page, totalPages])
+
+  const resetPage = useCallback(() => {
+    setPage(1)
+  }, [])
+
+  const onPrevPage = useCallback(() => {
+    setPage((current) => Math.max(1, current - 1))
+  }, [])
+
+  const onNextPage = useCallback(() => {
+    setPage((current) => Math.min(totalPages, current + 1))
+  }, [totalPages])
+
+  return { page, totalPages, totalRequests, resetPage, onPrevPage, onNextPage }
 }
 
 function useDashboardSnapshot() {
   const [rangePreset, setRangePreset] = useState<DashboardTimeRange>("30d")
-  const [page, setPage] = useState(1)
   const [snapshot, setSnapshot] = useState<DashboardSnapshot | null>(null)
   const [status, setStatus] = useState<DashboardStatus>("idle")
   const [statusMessage, setStatusMessage] = useState("")
+  const totalRequests = snapshot?.summary.totalRequests ?? 0
+  const { page, totalPages, resetPage, onPrevPage, onNextPage } =
+    usePagination(totalRequests)
 
   const loadSnapshot = useCallback(async () => {
     setStatus("loading")
@@ -53,37 +73,21 @@ function useDashboardSnapshot() {
     void loadSnapshot()
   }, [loadSnapshot])
 
-  const pagination = useMemo(() => derivePagination(snapshot, page), [snapshot, page])
-
-  useEffect(() => {
-    if (pagination.page !== page) {
-      setPage(pagination.page)
-    }
-  }, [page, pagination.page])
-
   const handleRangeChange = useCallback((next: DashboardTimeRange) => {
     setRangePreset(next)
-    setPage(1)
-  }, [])
-
-  const handlePrevPage = useCallback(() => {
-    setPage((current) => Math.max(1, current - 1))
-  }, [])
-
-  const handleNextPage = useCallback(() => {
-    setPage((current) => Math.min(pagination.totalPages, current + 1))
-  }, [pagination.totalPages])
+    resetPage()
+  }, [resetPage])
 
   return {
     snapshot,
     status,
     statusMessage,
     rangePreset,
-    pagination,
+    pagination: { page, totalPages, totalRequests },
     refresh: loadSnapshot,
     onRangeChange: handleRangeChange,
-    onPrevPage: handlePrevPage,
-    onNextPage: handleNextPage,
+    onPrevPage,
+    onNextPage,
   }
 }
 

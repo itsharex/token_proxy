@@ -7,7 +7,6 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar"
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
   ConfigFileCard,
   ProxyCoreCard,
@@ -18,10 +17,9 @@ import {
 } from "@/features/config/cards"
 import type { ProxyServiceViewProps } from "@/features/config/cards/proxy-service-card"
 import type { ConfigSection, ConfigSectionId } from "@/features/config/sections"
-import { CONFIG_SECTIONS, findSection, toConfigSectionId } from "@/features/config/sections"
+import { findSection } from "@/features/config/sections"
 import type { ConfigForm, ProxyServiceRequestState, ProxyServiceStatus } from "@/features/config/types"
 import { DashboardPanel } from "@/features/dashboard/DashboardPanel"
-import { cn } from "@/lib/utils"
 import { m } from "@/paraglide/messages.js"
 
 type AppViewProps = {
@@ -56,7 +54,6 @@ type AppViewProps = {
   onProxyServiceStop: () => void
   onProxyServiceRestart: () => void
   onProxyServiceReload: () => void
-  onSectionChange: (next: ConfigSectionId) => void
 }
 
 type ConfigToolbarProps = {
@@ -114,46 +111,7 @@ function StatusAlert({ statusMessage }: StatusAlertProps) {
   )
 }
 
-type ConfigSectionTabsProps = {
-  activeSectionId: ConfigSectionId
-  onSectionChange: (next: ConfigSectionId) => void
-}
-
-function ConfigSectionTabs({ activeSectionId, onSectionChange }: ConfigSectionTabsProps) {
-  return (
-    <Tabs
-      value={activeSectionId}
-      onValueChange={(value) => {
-        const next = toConfigSectionId(value)
-        if (next) {
-          onSectionChange(next)
-        }
-      }}
-      className="px-4 lg:px-6"
-    >
-      <TabsList className="h-auto flex-wrap justify-start gap-2 bg-transparent p-0">
-        {CONFIG_SECTIONS.map((section) => {
-          const isActive = section.id === activeSectionId
-          return (
-            <TabsTrigger
-              key={section.id}
-              value={section.id}
-              aria-current={isActive ? "page" : undefined}
-              className={cn(
-                "rounded-full border border-border/60 bg-background/70 px-3 py-1.5 text-xs font-medium transition-colors",
-                "data-[state=active]:bg-accent data-[state=active]:text-accent-foreground"
-              )}
-            >
-              {section.label()}
-            </TabsTrigger>
-          )
-        })}
-      </TabsList>
-    </Tabs>
-  )
-}
-
-type ConfigSectionContentProps = Omit<AppViewProps, "activeSectionId" | "onSectionChange"> & {
+type ConfigSectionContentProps = Omit<AppViewProps, "activeSectionId"> & {
   activeSectionId: ConfigSectionId
   proxyService: ProxyServiceViewProps
 }
@@ -244,7 +202,7 @@ function toProxyServiceViewProps(props: AppViewProps) {
 }
 
 export function AppView(props: AppViewProps) {
-  const { activeSectionId, onSectionChange, ...viewProps } = props
+  const { activeSectionId, ...viewProps } = props
   const sectionMeta = useMemo(() => findSection(activeSectionId), [activeSectionId])
   const proxyService = toProxyServiceViewProps(props)
 
@@ -264,10 +222,6 @@ export function AppView(props: AppViewProps) {
           <ScrollArea className="flex-1">
             <div className="@container/main flex flex-1 flex-col gap-2">
               <div className="flex flex-col gap-4 py-4 md:gap-6 md:py-6">
-                <ConfigSectionTabs
-                  activeSectionId={activeSectionId}
-                  onSectionChange={onSectionChange}
-                />
                 <ConfigSectionContent
                   {...viewProps}
                   activeSectionId={activeSectionId}

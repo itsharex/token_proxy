@@ -48,7 +48,6 @@ type StatusState = "idle" | "loading" | "saving" | "saved" | "error";
 
 type ConfigScreenProps = {
   activeSectionId: ConfigSectionId;
-  onSectionChange: (next: ConfigSectionId) => void;
 };
 
 function createStatusBadge(
@@ -385,7 +384,6 @@ type ProxyServiceActions = ReturnType<typeof useProxyServiceActions>;
 
 type AppViewArgs = {
   activeSectionId: ConfigSectionId;
-  onSectionChange: (next: ConfigSectionId) => void;
   state: ConfigState;
   derived: ConfigDerived;
   proxyService: ProxyServiceState;
@@ -396,7 +394,6 @@ type AppViewArgs = {
 
 function buildAppViewProps({
   activeSectionId,
-  onSectionChange,
   state,
   derived,
   proxyService,
@@ -437,11 +434,10 @@ function buildAppViewProps({
     onProxyServiceStop: proxyActions.stopProxy,
     onProxyServiceRestart: proxyActions.restartProxy,
     onProxyServiceReload: proxyActions.reloadProxy,
-    onSectionChange,
   };
 }
 
-export function ConfigScreen({ activeSectionId, onSectionChange }: ConfigScreenProps) {
+export function ConfigScreen({ activeSectionId }: ConfigScreenProps) {
   const state = useConfigState();
   const derived = useConfigDerived(
     state.form,
@@ -483,7 +479,6 @@ export function ConfigScreen({ activeSectionId, onSectionChange }: ConfigScreenP
 
   const appViewProps = buildAppViewProps({
     activeSectionId,
-    onSectionChange,
     state,
     derived,
     proxyService,
