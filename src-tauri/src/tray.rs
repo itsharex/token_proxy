@@ -1,5 +1,6 @@
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
+use std::time::Instant;
 #[cfg(target_os = "macos")]
 use std::time::Duration;
 
@@ -55,16 +56,35 @@ impl TrayState {
     }
 
     pub(crate) fn apply_config(&self, config: &TrayTokenRateConfig) {
+        tracing::debug!("tray apply_config start");
+        let start = Instant::now();
+        tracing::debug!("tray apply_config acquiring token_rate_config write lock");
         let mut guard = self
             .inner
             .token_rate_config
             .write()
             .expect("tray token rate config lock poisoned");
+        tracing::debug!(
+            elapsed_ms = start.elapsed().as_millis(),
+            "tray apply_config token_rate_config locked"
+        );
         *guard = config.clone();
-        self.inner.token_rate.set_enabled(config.enabled);
+        let enabled = config.enabled;
+        drop(guard);
+        tracing::debug!(
+            enabled,
+            elapsed_ms = start.elapsed().as_millis(),
+            "tray apply_config set_enabled start"
+        );
+        self.inner.token_rate.set_enabled(enabled);
+        tracing::debug!(
+            enabled,
+            elapsed_ms = start.elapsed().as_millis(),
+            "tray apply_config set_enabled done"
+        );
         #[cfg(target_os = "macos")]
         {
-            if config.enabled {
+            if enabled {
                 self.ensure_token_rate_loop();
             } else {
                 self.stop_token_rate_loop();
@@ -72,7 +92,15 @@ impl TrayState {
             }
         }
         // 配置变化也唤醒托盘刷新，避免空闲等待时错过更新。
+        tracing::debug!(
+            elapsed_ms = start.elapsed().as_millis(),
+            "tray apply_config notify_activity"
+        );
         self.inner.token_rate.notify_activity();
+        tracing::debug!(
+            elapsed_ms = start.elapsed().as_millis(),
+            "tray apply_config done"
+        );
     }
 
     pub(crate) fn apply_status(&self, status: &ProxyServiceStatus) {

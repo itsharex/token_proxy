@@ -2,6 +2,7 @@
 mod proxy;
 mod tray;
 
+use std::time::Instant;
 use tauri::Manager;
 use tracing_subscriber::{fmt, EnvFilter};
 
@@ -20,17 +21,38 @@ async fn write_proxy_config(
     tray_state: tauri::State<'_, tray::TrayState>,
     config: proxy::config::ProxyConfigFile,
 ) -> Result<ProxyServiceStatus, String> {
+    tracing::debug!("write_proxy_config start");
+    let start = Instant::now();
+    tracing::debug!("write_proxy_config apply_config start");
+    let apply_start = Instant::now();
     tray_state.apply_config(&config.tray_token_rate);
+    tracing::debug!(
+        elapsed_ms = apply_start.elapsed().as_millis(),
+        "write_proxy_config apply_config done"
+    );
     if let Err(err) = proxy::config::write_config(app.clone(), config).await {
+        tracing::error!(error = %err, "write_proxy_config save failed");
         tray_state.apply_error("保存失败", &err);
         return Err(err);
     }
+    tracing::debug!(elapsed_ms = start.elapsed().as_millis(), "write_proxy_config saved");
+    let reload_start = Instant::now();
     match proxy_service.reload(app).await {
         Ok(status) => {
+            tracing::debug!(
+                elapsed_ms = reload_start.elapsed().as_millis(),
+                state = ?status.state,
+                "write_proxy_config reloaded"
+            );
             tray_state.apply_status(&status);
             Ok(status)
         }
         Err(err) => {
+            tracing::error!(
+                elapsed_ms = reload_start.elapsed().as_millis(),
+                error = %err,
+                "write_proxy_config reload failed"
+            );
             tray_state.apply_error("重载失败", &err);
             Err(err)
         }

@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 use tauri::{AppHandle, Manager};
 
@@ -10,14 +11,37 @@ const DEFAULT_CONFIG_HEADER: &str =
 
 pub(super) async fn load_config_file(app: &AppHandle) -> Result<ProxyConfigFile, String> {
     let path = config_file_path(app)?;
+    tracing::debug!(path = %path.display(), "load_config_file start");
+    let start = Instant::now();
     match tokio::fs::read_to_string(&path).await {
-        Ok(contents) => parse_config_file(&contents, &path),
+        Ok(contents) => {
+            tracing::debug!(
+                path = %path.display(),
+                bytes = contents.len(),
+                elapsed_ms = start.elapsed().as_millis(),
+                "load_config_file read"
+            );
+            parse_config_file(&contents, &path)
+        }
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            tracing::debug!(
+                path = %path.display(),
+                elapsed_ms = start.elapsed().as_millis(),
+                "load_config_file missing, creating default"
+            );
             let config = ProxyConfigFile::default();
             save_config_file(app, &config).await?;
             Ok(config)
         }
-        Err(err) => Err(format!("Failed to read config file: {err}")),
+        Err(err) => {
+            tracing::error!(
+                path = %path.display(),
+                elapsed_ms = start.elapsed().as_millis(),
+                error = %err,
+                "load_config_file read failed"
+            );
+            Err(format!("Failed to read config file: {err}"))
+        }
     }
 }
 
@@ -26,16 +50,33 @@ pub(super) async fn save_config_file(
     config: &ProxyConfigFile,
 ) -> Result<(), String> {
     let path = config_file_path(app)?;
+    tracing::debug!(path = %path.display(), "save_config_file start");
+    let start = Instant::now();
     ensure_parent_dir(&path).await?;
+    tracing::debug!(
+        path = %path.display(),
+        elapsed_ms = start.elapsed().as_millis(),
+        "save_config_file ensured dir"
+    );
     let data = serde_json::to_string_pretty(config)
         .map_err(|err| format!("Failed to serialize config: {err}"))?;
     let header = read_existing_header(&path)
         .await
         .unwrap_or_else(default_config_header);
+    tracing::debug!(
+        path = %path.display(),
+        elapsed_ms = start.elapsed().as_millis(),
+        "save_config_file header ready"
+    );
     let output = merge_header_and_body(header, data);
     tokio::fs::write(&path, output)
         .await
         .map_err(|err| format!("Failed to write config file: {err}"))?;
+    tracing::debug!(
+        path = %path.display(),
+        elapsed_ms = start.elapsed().as_millis(),
+        "save_config_file wrote"
+    );
     Ok(())
 }
 
@@ -212,7 +253,15 @@ fn strip_trailing_commas(contents: &str) -> String {
 }
 
 async fn read_existing_header(path: &Path) -> Option<String> {
+    tracing::debug!(path = %path.display(), "read_existing_header start");
+    let start = Instant::now();
     let contents = tokio::fs::read_to_string(path).await.ok()?;
+    tracing::debug!(
+        path = %path.display(),
+        bytes = contents.len(),
+        elapsed_ms = start.elapsed().as_millis(),
+        "read_existing_header read"
+    );
     let header = extract_leading_jsonc_comments(&contents);
     if header.trim().is_empty() {
         None
@@ -292,7 +341,15 @@ async fn ensure_parent_dir(path: &Path) -> Result<(), String> {
     let Some(parent) = path.parent() else {
         return Ok(());
     };
+    tracing::debug!(path = %parent.display(), "ensure_parent_dir start");
+    let start = Instant::now();
     tokio::fs::create_dir_all(parent)
         .await
-        .map_err(|err| format!("Failed to create config directory: {err}"))
+        .map_err(|err| format!("Failed to create config directory: {err}"))?;
+    tracing::debug!(
+        path = %parent.display(),
+        elapsed_ms = start.elapsed().as_millis(),
+        "ensure_parent_dir done"
+    );
+    Ok(())
 }

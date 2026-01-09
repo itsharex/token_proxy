@@ -72,13 +72,16 @@ impl TokenRateTracker {
     }
 
     pub(crate) fn set_enabled(&self, enabled: bool) {
+        tracing::debug!(enabled, "token_rate set_enabled start");
         let previous = self.inner.enabled.swap(enabled, Ordering::SeqCst);
         if previous == enabled {
+            tracing::debug!(enabled, "token_rate set_enabled noop");
             return;
         }
         // 每次开关切换递增 generation，确保旧请求不会在重新开启后继续计数。
         self.inner.generation.fetch_add(1, Ordering::SeqCst);
         if !enabled {
+            tracing::debug!("token_rate set_enabled clearing requests start");
             let mut guard = self
                 .inner
                 .requests
@@ -86,7 +89,9 @@ impl TokenRateTracker {
                 .expect("token rate lock poisoned");
             guard.clear();
             self.inner.active.store(0, Ordering::SeqCst);
+            tracing::debug!("token_rate set_enabled clearing requests done");
         }
+        tracing::debug!(enabled, "token_rate set_enabled done");
     }
 
     pub(crate) fn register(

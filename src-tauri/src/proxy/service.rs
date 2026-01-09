@@ -2,7 +2,7 @@ use serde::Serialize;
 use sqlx::SqlitePool;
 use std::future::IntoFuture;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Manager};
 use tokio::sync::{Mutex, RwLock};
 use tokio::task::JoinHandle;
@@ -53,7 +53,7 @@ impl ProxyServiceHandle {
     }
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, Debug)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum ProxyServiceState {
     Running,
@@ -220,7 +220,10 @@ impl ProxyServiceInner {
     }
 
     async fn reload(&mut self, app: AppHandle) -> Result<(), String> {
+        tracing::debug!("proxy reload start");
+        let start = Instant::now();
         if self.running.is_none() {
+            tracing::debug!("proxy reload: not running, start instead");
             return self.start(app).await;
         }
         let loaded_config = ProxyConfig::load(&app).await?;
@@ -232,20 +235,28 @@ impl ProxyServiceInner {
             .unwrap_or_default()
             .to_string();
 
+        tracing::debug!(addr = %addr, current_addr = %current_addr, "proxy reload config loaded");
         if addr != current_addr {
             // host/port 变更无法热更新监听地址；退化为安全重启。
+            tracing::info!(
+                addr = %addr,
+                current_addr = %current_addr,
+                "proxy reload detected addr change, restarting"
+            );
             return self.restart(app).await;
         }
 
         let sqlite_pool = self.sqlite_pool.clone();
         let new_state = build_proxy_state(&app, loaded_config, sqlite_pool).await?;
         let Some(running) = self.running.as_ref() else {
+            tracing::debug!("proxy reload: running cleared before swap");
             return Ok(());
         };
         {
             let mut guard = running.state_handle.write().await;
             *guard = new_state;
         }
+        tracing::debug!(elapsed_ms = start.elapsed().as_millis(), "proxy reload applied");
         Ok(())
     }
 
