@@ -149,10 +149,7 @@ pub(crate) fn init_tray(
         .menu(&menu)
         .build(app)?;
 
-    let token_rate = app
-        .state::<Arc<TokenRateTracker>>()
-        .inner()
-        .clone();
+    let token_rate = app.state::<Arc<TokenRateTracker>>().inner().clone();
     let tray_state = TrayState {
         inner: Arc::new(TrayStateInner {
             tray,
@@ -170,53 +167,53 @@ pub(crate) fn init_tray(
     let tray_state_for_menu = tray_state.clone();
     let proxy_for_menu = proxy_service.clone();
     tray_state.inner.tray.on_menu_event(move |app, event| {
-            let id = event.id().as_ref();
-            match id {
-                MENU_SHOW => {
-                    if let Some(window) = app.get_webview_window("main") {
-                        let _ = window.show();
-                        let _ = window.set_focus();
-                    }
+        let id = event.id().as_ref();
+        match id {
+            MENU_SHOW => {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.show();
+                    let _ = window.set_focus();
                 }
-                MENU_START => {
-                    let app = app.clone();
-                    let tray_state = tray_state_for_menu.clone();
-                    let proxy_service = proxy_for_menu.clone();
-                    tauri::async_runtime::spawn(async move {
-                        match proxy_service.start(app).await {
-                            Ok(status) => tray_state.apply_status(&status),
-                            Err(err) => tray_state.apply_error("启动失败", &err),
-                        }
-                    });
-                }
-                MENU_STOP => {
-                    let tray_state = tray_state_for_menu.clone();
-                    let proxy_service = proxy_for_menu.clone();
-                    tauri::async_runtime::spawn(async move {
-                        match proxy_service.stop().await {
-                            Ok(status) => tray_state.apply_status(&status),
-                            Err(err) => tray_state.apply_error("停止失败", &err),
-                        }
-                    });
-                }
-                MENU_RESTART => {
-                    let app = app.clone();
-                    let tray_state = tray_state_for_menu.clone();
-                    let proxy_service = proxy_for_menu.clone();
-                    tauri::async_runtime::spawn(async move {
-                        match proxy_service.restart(app).await {
-                            Ok(status) => tray_state.apply_status(&status),
-                            Err(err) => tray_state.apply_error("重启失败", &err),
-                        }
-                    });
-                }
-                MENU_QUIT => {
-                    tray_state_for_menu.mark_quit();
-                    app.exit(0);
-                }
-                _ => {}
             }
-        });
+            MENU_START => {
+                let app = app.clone();
+                let tray_state = tray_state_for_menu.clone();
+                let proxy_service = proxy_for_menu.clone();
+                tauri::async_runtime::spawn(async move {
+                    match proxy_service.start(app).await {
+                        Ok(status) => tray_state.apply_status(&status),
+                        Err(err) => tray_state.apply_error("启动失败", &err),
+                    }
+                });
+            }
+            MENU_STOP => {
+                let tray_state = tray_state_for_menu.clone();
+                let proxy_service = proxy_for_menu.clone();
+                tauri::async_runtime::spawn(async move {
+                    match proxy_service.stop().await {
+                        Ok(status) => tray_state.apply_status(&status),
+                        Err(err) => tray_state.apply_error("停止失败", &err),
+                    }
+                });
+            }
+            MENU_RESTART => {
+                let app = app.clone();
+                let tray_state = tray_state_for_menu.clone();
+                let proxy_service = proxy_for_menu.clone();
+                tauri::async_runtime::spawn(async move {
+                    match proxy_service.restart(app).await {
+                        Ok(status) => tray_state.apply_status(&status),
+                        Err(err) => tray_state.apply_error("重启失败", &err),
+                    }
+                });
+            }
+            MENU_QUIT => {
+                tray_state_for_menu.mark_quit();
+                app.exit(0);
+            }
+            _ => {}
+        }
+    });
 
     #[cfg(target_os = "macos")]
     start_token_rate_loop(tray_state.clone());
@@ -234,7 +231,7 @@ fn start_token_rate_loop(tray_state: TrayState) {
                 break;
             }
             if token_rate.has_active_requests() {
-                let mut interval = tokio::time::interval(Duration::from_millis(300));
+                let mut interval = tokio::time::interval(Duration::from_millis(333));
                 loop {
                     interval.tick().await;
                     if tray_state.should_quit() {
@@ -262,7 +259,10 @@ fn format_rate_title(snapshot: TokenRateSnapshot, format: TrayTokenRateFormat) -
         TrayTokenRateFormat::Combined => format!("{}", snapshot.total),
         TrayTokenRateFormat::Split => format!("↑{} ↓{}", snapshot.input, snapshot.output),
         TrayTokenRateFormat::Both => {
-            format!("{} | ↑{} ↓{}", snapshot.total, snapshot.input, snapshot.output)
+            format!(
+                "{} | ↑{} ↓{}",
+                snapshot.total, snapshot.input, snapshot.output
+            )
         }
     }
 }
