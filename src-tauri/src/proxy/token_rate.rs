@@ -4,9 +4,15 @@ use std::sync::{Arc, Mutex, OnceLock, RwLock};
 use std::time::{Duration, Instant};
 
 use tiktoken_rs::{cl100k_base, o200k_base, CoreBPE};
-use tokio::sync::watch;
+use tokio::{
+    sync::watch,
+    time::{interval, MissedTickBehavior},
+};
 
 const RATE_WINDOW: Duration = Duration::from_secs(1);
+const CLEANUP_INTERVAL: Duration = Duration::from_secs(60);
+// 超过该时长未记录 token 的请求窗口视为过期，避免 HashMap 无界增长。
+const REQUEST_TTL: Duration = Duration::from_secs(300);
 
 #[derive(Clone)]
 pub(crate) struct TokenRateTracker {
@@ -19,11 +25,13 @@ struct TrackerInner {
     active: AtomicUsize,
     enabled: AtomicBool,
     generation: AtomicU64,
+    last_cleanup: Mutex<Instant>,
     requests: RwLock<HashMap<u64, Arc<Mutex<RequestWindow>>>>,
 }
 
 struct RequestWindow {
     events: VecDeque<TokenEvent>,
+    last_seen: Instant,
 }
 
 struct TokenEvent {
@@ -51,16 +59,19 @@ pub(crate) struct RequestTokenTracker {
 impl TokenRateTracker {
     pub(crate) fn new() -> Arc<Self> {
         let (activity_tx, _activity_rx) = watch::channel(0u64);
-        Arc::new(Self {
+        let tracker = Arc::new(Self {
             inner: Arc::new(TrackerInner {
                 next_id: AtomicU64::new(1),
                 active: AtomicUsize::new(0),
                 enabled: AtomicBool::new(true),
                 generation: AtomicU64::new(1),
+                last_cleanup: Mutex::new(Instant::now()),
                 requests: RwLock::new(HashMap::new()),
             }),
             activity_tx,
-        })
+        });
+        Self::spawn_cleanup(&tracker);
+        tracker
     }
 
     pub(crate) fn subscribe_activity(&self) -> watch::Receiver<u64> {
@@ -100,6 +111,7 @@ impl TokenRateTracker {
         model: Option<String>,
         input_tokens: Option<u64>,
     ) -> RequestTokenTracker {
+        self.maybe_cleanup(Instant::now());
         let enabled = self.inner.enabled.load(Ordering::SeqCst);
         let generation = self.inner.generation.load(Ordering::SeqCst);
         let (mut id, mut window) = if enabled {
@@ -154,6 +166,7 @@ impl TokenRateTracker {
                 connections: 0,
             };
         }
+        self.maybe_cleanup(Instant::now());
         let now = Instant::now();
         let windows: Vec<Arc<Mutex<RequestWindow>>> = self
             .inner
@@ -191,12 +204,16 @@ impl TokenRateTracker {
         if input == 0 && output == 0 {
             return;
         }
-        let mut guard = window.lock().expect("token rate lock poisoned");
-        guard.push(TokenEvent {
-            ts: Instant::now(),
-            input,
-            output,
-        });
+        let now = Instant::now();
+        {
+            let mut guard = window.lock().expect("token rate lock poisoned");
+            guard.push(TokenEvent {
+                ts: now,
+                input,
+                output,
+            });
+        }
+        self.maybe_cleanup(now);
     }
 
     fn unregister(&self, id: u64) {
@@ -211,18 +228,102 @@ impl TokenRateTracker {
             self.inner.active.fetch_sub(1, Ordering::SeqCst);
         }
     }
+
+    // 后台定时清理，避免长时间无请求时也能释放过期窗口。
+    fn spawn_cleanup(tracker: &Arc<Self>) {
+        let weak = Arc::downgrade(tracker);
+        tokio::spawn(async move {
+            let mut ticker = interval(CLEANUP_INTERVAL);
+            ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
+            loop {
+                ticker.tick().await;
+                let Some(tracker) = weak.upgrade() else {
+                    break;
+                };
+                if !tracker.inner.enabled.load(Ordering::SeqCst) {
+                    continue;
+                }
+                tracker.cleanup_expired(Instant::now());
+            }
+        });
+    }
+
+    // 惰性清理：在流量发生时按间隔触发，减少单独后台依赖。
+    fn maybe_cleanup(&self, now: Instant) {
+        if !self.inner.enabled.load(Ordering::SeqCst) {
+            return;
+        }
+        if !self.should_cleanup(now) {
+            return;
+        }
+        self.cleanup_expired(now);
+    }
+
+    fn should_cleanup(&self, now: Instant) -> bool {
+        let mut guard = self
+            .inner
+            .last_cleanup
+            .lock()
+            .expect("token rate lock poisoned");
+        if now.duration_since(*guard) < CLEANUP_INTERVAL {
+            return false;
+        }
+        *guard = now;
+        true
+    }
+
+    fn cleanup_expired(&self, now: Instant) {
+        let windows: Vec<(u64, Arc<Mutex<RequestWindow>>)> = self
+            .inner
+            .requests
+            .read()
+            .expect("token rate lock poisoned")
+            .iter()
+            .map(|(id, window)| (*id, window.clone()))
+            .collect();
+        if windows.is_empty() {
+            return;
+        }
+        let mut expired = Vec::new();
+        for (id, window) in windows {
+            let guard = window.lock().expect("token rate lock poisoned");
+            if guard.is_expired(now) {
+                expired.push(id);
+            }
+        }
+        if expired.is_empty() {
+            return;
+        }
+        let mut guard = self
+            .inner
+            .requests
+            .write()
+            .expect("token rate lock poisoned");
+        let mut removed = 0usize;
+        for id in expired {
+            if guard.remove(&id).is_some() {
+                removed += 1;
+            }
+        }
+        if removed > 0 {
+            self.inner.active.fetch_sub(removed, Ordering::SeqCst);
+        }
+    }
 }
 
 impl RequestWindow {
     fn new() -> Self {
         Self {
             events: VecDeque::new(),
+            last_seen: Instant::now(),
         }
     }
 
     fn push(&mut self, event: TokenEvent) {
+        let now = event.ts;
         self.events.push_back(event);
-        self.prune(Instant::now());
+        self.last_seen = now;
+        self.prune(now);
     }
 
     fn prune(&mut self, now: Instant) {
@@ -242,6 +343,10 @@ impl RequestWindow {
             output = output.saturating_add(event.output);
         }
         (input, output)
+    }
+
+    fn is_expired(&self, now: Instant) -> bool {
+        now.saturating_duration_since(self.last_seen) > REQUEST_TTL
     }
 }
 
