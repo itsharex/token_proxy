@@ -182,7 +182,7 @@ pub(crate) fn build_upstream_cursors(config: &ProxyConfig) -> HashMap<String, Ve
 
 pub(crate) fn build_router(state: ProxyStateHandle) -> Router<ProxyStateHandle> {
     Router::new()
-        .route("/*path", any(proxy_request))
+        .route("/{*path}", any(proxy_request))
         .layer(DefaultBodyLimit::disable())
         .with_state(state)
 }
