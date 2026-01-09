@@ -11,6 +11,7 @@ mod response;
 mod server;
 mod sse;
 mod sqlite;
+pub(crate) mod token_rate;
 mod upstream;
 mod usage;
 
@@ -24,12 +25,14 @@ struct ProxyState {
     client: reqwest::Client,
     log: Arc<log::LogWriter>,
     cursors: HashMap<String, Vec<AtomicUsize>>,
+    token_rate: Arc<token_rate::TokenRateTracker>,
 }
 
 struct RequestMeta {
     stream: bool,
     original_model: Option<String>,
     mapped_model: Option<String>,
+    estimated_input_tokens: Option<u64>,
 }
 
 impl RequestMeta {

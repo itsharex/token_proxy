@@ -71,7 +71,14 @@ fn stream_responses_to_chat_emits_role_delta_and_done_and_logs_usage() {
             Ok(Bytes::from("data: [DONE]\n\n")),
         ]);
 
-        let chunks: Vec<Bytes> = stream_responses_to_chat(upstream, context, log.clone())
+        let token_tracker = super::super::token_rate::TokenRateTracker::new().register(None, None);
+        let chunks: Vec<Bytes> =
+            super::responses_to_chat::stream_responses_to_chat(
+                upstream,
+                context,
+                log.clone(),
+                token_tracker,
+            )
             .map(|item| item.expect("stream item"))
             .collect()
             .await;
@@ -147,7 +154,9 @@ fn stream_chat_to_responses_handles_chunk_boundaries_and_emits_created_delta_don
             Ok(Bytes::from("data: [DONE]\n\n")),
         ]);
 
-        let chunks: Vec<Bytes> = stream_chat_to_responses(upstream, context, log.clone())
+        let token_tracker = super::super::token_rate::TokenRateTracker::new().register(None, None);
+        let chunks: Vec<Bytes> =
+            stream_chat_to_responses(upstream, context, log.clone(), token_tracker)
             .map(|item| item.expect("stream item"))
             .collect()
             .await;
@@ -259,7 +268,9 @@ fn stream_chat_to_responses_emits_function_call_events_and_includes_them_in_comp
             Ok(Bytes::from("data: [DONE]\n\n")),
         ]);
 
-        let chunks: Vec<Bytes> = stream_chat_to_responses(upstream, context, log.clone())
+        let token_tracker = super::super::token_rate::TokenRateTracker::new().register(None, None);
+        let chunks: Vec<Bytes> =
+            stream_chat_to_responses(upstream, context, log.clone(), token_tracker)
             .map(|item| item.expect("stream item"))
             .collect()
             .await;

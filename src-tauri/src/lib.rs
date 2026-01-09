@@ -20,6 +20,7 @@ async fn write_proxy_config(
     tray_state: tauri::State<'_, tray::TrayState>,
     config: proxy::config::ProxyConfigFile,
 ) -> Result<ProxyServiceStatus, String> {
+    tray_state.apply_config(&config.tray_token_rate);
     if let Err(err) = proxy::config::write_config(app.clone(), config).await {
         tray_state.apply_error("保存失败", &err);
         return Err(err);
@@ -148,6 +149,8 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
+            let token_rate = proxy::token_rate::TokenRateTracker::new();
+            app.manage(token_rate.clone());
             let proxy_service = ProxyServiceHandle::new();
             app.manage(proxy_service.clone());
             let app_handle = app.handle().clone();
@@ -156,6 +159,14 @@ pub fn run() {
 
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+
+            let tray_state_for_config = tray_state.clone();
+            let app_handle_for_config = app_handle.clone();
+            tauri::async_runtime::spawn(async move {
+                if let Ok(response) = proxy::config::read_config(app_handle_for_config).await {
+                    tray_state_for_config.apply_config(&response.config.tray_token_rate);
+                }
+            });
 
             let tray_state_for_start = tray_state.clone();
             let proxy_for_start = proxy_service.clone();

@@ -19,6 +19,10 @@ fn default_proxy_port() -> u16 {
     }
 }
 
+fn default_tray_token_rate_enabled() -> bool {
+    true
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum UpstreamStrategy {
@@ -29,6 +33,37 @@ pub(crate) enum UpstreamStrategy {
 impl Default for UpstreamStrategy {
     fn default() -> Self {
         Self::PriorityRoundRobin
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum TrayTokenRateFormat {
+    Combined,
+    Split,
+    Both,
+}
+
+impl Default for TrayTokenRateFormat {
+    fn default() -> Self {
+        Self::Combined
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub(crate) struct TrayTokenRateConfig {
+    #[serde(default = "default_tray_token_rate_enabled")]
+    pub(crate) enabled: bool,
+    #[serde(default)]
+    pub(crate) format: TrayTokenRateFormat,
+}
+
+impl Default for TrayTokenRateConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_tray_token_rate_enabled(),
+            format: TrayTokenRateFormat::default(),
+        }
     }
 }
 
@@ -52,6 +87,8 @@ pub(crate) struct ProxyConfigFile {
     pub(crate) port: u16,
     pub(crate) local_api_key: Option<String>,
     pub(crate) log_path: String,
+    #[serde(default)]
+    pub(crate) tray_token_rate: TrayTokenRateConfig,
     /// 是否允许在 OpenAI Chat Completions 与 Responses API 之间自动互转。
     /// 默认为关闭；关闭时将严格按 provider 路由，不做格式转换。
     #[serde(default)]
@@ -69,6 +106,7 @@ impl Default for ProxyConfigFile {
             port: default_proxy_port(),
             local_api_key: None,
             log_path: "proxy.log".to_string(),
+            tray_token_rate: TrayTokenRateConfig::default(),
             enable_api_format_conversion: false,
             upstream_strategy: UpstreamStrategy::PriorityRoundRobin,
             upstreams: vec![

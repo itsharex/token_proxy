@@ -1,14 +1,18 @@
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
+use std::time::Duration;
 
 use tauri::image::Image;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
-use tauri::tray::TrayIconBuilder;
+use tauri::tray::{TrayIcon, TrayIconBuilder};
 use tauri::{AppHandle, Manager};
 
+use crate::proxy::config::{TrayTokenRateConfig, TrayTokenRateFormat};
 use crate::proxy::service::{ProxyServiceHandle, ProxyServiceState, ProxyServiceStatus};
+use crate::proxy::token_rate::{TokenRateSnapshot, TokenRateTracker};
 
 type AppMenuItem = MenuItem<tauri::Wry>;
+type AppTrayIcon = TrayIcon<tauri::Wry>;
 
 const TRAY_ID: &str = "token-proxy-tray";
 const MENU_SHOW: &str = "tray_show_window";
@@ -24,10 +28,14 @@ pub(crate) struct TrayState {
 }
 
 struct TrayStateInner {
+    tray: AppTrayIcon,
     start_item: AppMenuItem,
     stop_item: AppMenuItem,
     restart_item: AppMenuItem,
     status_item: AppMenuItem,
+    token_rate: Arc<TokenRateTracker>,
+    token_rate_config: RwLock<TrayTokenRateConfig>,
+    last_title: RwLock<Option<String>>,
     should_quit: AtomicBool,
 }
 
@@ -38,6 +46,15 @@ impl TrayState {
 
     pub(crate) fn mark_quit(&self) {
         self.inner.should_quit.store(true, Ordering::SeqCst);
+    }
+
+    pub(crate) fn apply_config(&self, config: &TrayTokenRateConfig) {
+        let mut guard = self
+            .inner
+            .token_rate_config
+            .write()
+            .expect("tray token rate config lock poisoned");
+        *guard = config.clone();
     }
 
     pub(crate) fn apply_status(&self, status: &ProxyServiceStatus) {
@@ -63,6 +80,42 @@ impl TrayState {
         let message = format!("{title} · {}", compact_error(err));
         let _ = self.inner.status_item.set_text(message);
         let _ = self.inner.status_item.set_enabled(false);
+    }
+
+    #[cfg(target_os = "macos")]
+    fn update_token_rate_title(&self) {
+        let config = self
+            .inner
+            .token_rate_config
+            .read()
+            .expect("tray token rate config lock poisoned")
+            .clone();
+        if !config.enabled {
+            self.set_title(None);
+            return;
+        }
+        if !self.inner.token_rate.has_active_requests() {
+            self.set_title(None);
+            return;
+        }
+
+        let snapshot = self.inner.token_rate.snapshot();
+        let title = format_rate_title(snapshot, config.format);
+        self.set_title(Some(title));
+    }
+
+    #[cfg(target_os = "macos")]
+    fn set_title(&self, title: Option<String>) {
+        let mut last_title = self
+            .inner
+            .last_title
+            .write()
+            .expect("tray title lock poisoned");
+        if *last_title == title {
+            return;
+        }
+        let _ = self.inner.tray.set_title(title.as_deref());
+        *last_title = title;
     }
 }
 
@@ -90,25 +143,35 @@ pub(crate) fn init_tray(
         &quit_item,
     ])?;
 
+    let tray = TrayIconBuilder::with_id(TRAY_ID)
+        .icon(load_tray_icon()?)
+        .tooltip("Token Proxy")
+        .show_menu_on_left_click(true)
+        .icon_as_template(true)
+        .menu(&menu)
+        .build(app)?;
+
+    let token_rate = app
+        .state::<Arc<TokenRateTracker>>()
+        .inner()
+        .clone();
     let tray_state = TrayState {
         inner: Arc::new(TrayStateInner {
+            tray,
             start_item: start_item.clone(),
             stop_item: stop_item.clone(),
             restart_item: restart_item.clone(),
             status_item: status_item.clone(),
+            token_rate,
+            token_rate_config: RwLock::new(TrayTokenRateConfig::default()),
+            last_title: RwLock::new(None),
             should_quit: AtomicBool::new(false),
         }),
     };
 
     let tray_state_for_menu = tray_state.clone();
     let proxy_for_menu = proxy_service.clone();
-    TrayIconBuilder::with_id(TRAY_ID)
-        .icon(load_tray_icon()?)
-        .tooltip("Token Proxy")
-        .show_menu_on_left_click(true)
-        .icon_as_template(true)
-        .menu(&menu)
-        .on_menu_event(move |app, event| {
+    tray_state.inner.tray.on_menu_event(move |app, event| {
             let id = event.id().as_ref();
             match id {
                 MENU_SHOW => {
@@ -155,10 +218,36 @@ pub(crate) fn init_tray(
                 }
                 _ => {}
             }
-        })
-        .build(app)?;
+        });
+
+    #[cfg(target_os = "macos")]
+    start_token_rate_loop(tray_state.clone());
 
     Ok(tray_state)
+}
+
+#[cfg(target_os = "macos")]
+fn start_token_rate_loop(tray_state: TrayState) {
+    tauri::async_runtime::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(1));
+        loop {
+            interval.tick().await;
+            if tray_state.should_quit() {
+                break;
+            }
+            tray_state.update_token_rate_title();
+        }
+    });
+}
+
+fn format_rate_title(snapshot: TokenRateSnapshot, format: TrayTokenRateFormat) -> String {
+    match format {
+        TrayTokenRateFormat::Combined => format!("t/s {}", snapshot.total),
+        TrayTokenRateFormat::Split => format!("↑{} ↓{} t/s", snapshot.input, snapshot.output),
+        TrayTokenRateFormat::Both => {
+            format!("{} t/s | ↑{} ↓{}", snapshot.total, snapshot.input, snapshot.output)
+        }
+    }
 }
 
 fn format_status_text(status: &ProxyServiceStatus) -> String {

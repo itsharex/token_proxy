@@ -2,7 +2,10 @@ import {
   type ConfigForm,
   type ModelMappingForm,
   type ProxyConfigFile,
+  type ProxyConfigFileBase,
+  type TrayTokenRateConfig,
   type UpstreamForm,
+  TRAY_TOKEN_RATE_FORMATS,
   UPSTREAM_STRATEGIES,
 } from "@/features/config/types";
 import { m } from "@/paraglide/messages.js";
@@ -50,14 +53,35 @@ const DEFAULT_UPSTREAMS: UpstreamForm[] = [
   },
 ];
 
+const DEFAULT_TRAY_TOKEN_RATE: TrayTokenRateConfig = {
+  enabled: true,
+  format: "combined",
+};
+
 const INTEGER_PATTERN = /^-?\d+$/;
 let modelMappingCounter = 0;
+
+const TRAY_TOKEN_RATE_FORMAT_VALUES: ReadonlySet<string> = new Set(
+  TRAY_TOKEN_RATE_FORMATS.map((format) => format.value)
+);
+
+const KNOWN_CONFIG_KEYS: ReadonlySet<string> = new Set([
+  "host",
+  "port",
+  "local_api_key",
+  "log_path",
+  "tray_token_rate",
+  "enable_api_format_conversion",
+  "upstream_strategy",
+  "upstreams",
+]);
 
 export const EMPTY_FORM: ConfigForm = {
   host: "127.0.0.1",
   port: "9208",
   localApiKey: "",
   logPath: "proxy.log",
+  trayTokenRate: { ...DEFAULT_TRAY_TOKEN_RATE },
   enableApiFormatConversion: false,
   upstreamStrategy: UPSTREAM_STRATEGIES[0].value,
   upstreams: DEFAULT_UPSTREAMS.map((upstream) => ({ ...upstream })),
@@ -86,12 +110,33 @@ export function createModelMapping(pattern = "", target = "") {
   };
 }
 
+export function extractConfigExtras(config: ProxyConfigFile) {
+  const extras: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(config)) {
+    if (!KNOWN_CONFIG_KEYS.has(key)) {
+      extras[key] = value;
+    }
+  }
+  return extras;
+}
+
+export function mergeConfigExtras(
+  config: ProxyConfigFileBase,
+  extras: Record<string, unknown>
+) {
+  return {
+    ...extras,
+    ...config,
+  };
+}
+
 export function toForm(config: ProxyConfigFile): ConfigForm {
   return {
     host: config.host,
     port: String(config.port),
     localApiKey: config.local_api_key ?? "",
     logPath: config.log_path,
+    trayTokenRate: normalizeTrayTokenRate(config.tray_token_rate),
     enableApiFormatConversion: config.enable_api_format_conversion,
     upstreamStrategy: config.upstream_strategy,
     upstreams: config.upstreams.map((upstream) => ({
@@ -114,6 +159,7 @@ export function toPayload(form: ConfigForm): ProxyConfigFile {
     port,
     local_api_key: form.localApiKey.trim() ? form.localApiKey.trim() : null,
     log_path: form.logPath.trim(),
+    tray_token_rate: form.trayTokenRate,
     enable_api_format_conversion: form.enableApiFormatConversion,
     upstream_strategy: form.upstreamStrategy,
     upstreams: form.upstreams.map((upstream) => ({
@@ -191,6 +237,13 @@ function toModelMappingPayload(mappings: ModelMappingForm[]) {
     (mapping): [string, string] => [mapping.pattern.trim(), mapping.target.trim()],
   );
   return Object.fromEntries(entries);
+}
+
+function normalizeTrayTokenRate(value: TrayTokenRateConfig) {
+  if (!TRAY_TOKEN_RATE_FORMAT_VALUES.has(value.format)) {
+    return { ...value, format: DEFAULT_TRAY_TOKEN_RATE.format };
+  }
+  return value;
 }
 
 function validateModelMappings(mappings: ModelMappingForm[], upstreamId: string) {

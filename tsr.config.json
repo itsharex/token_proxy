@@ -1,0 +1,8 @@
+{
+  "routesDirectory": "./src/routes",
+  "generatedRouteTree": "./src/routeTree.gen.ts",
+  "routeTreeFileHeader": [],
+  "quoteStyle": "double",
+  "disableLogging": true,
+  "autoCodeSplitting": true
+}

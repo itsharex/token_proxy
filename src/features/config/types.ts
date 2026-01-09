@@ -7,6 +7,19 @@ export const UPSTREAM_STRATEGIES = [
 
 export type UpstreamStrategy = (typeof UPSTREAM_STRATEGIES)[number]["value"];
 
+export const TRAY_TOKEN_RATE_FORMATS = [
+  { value: "combined", label: () => m.proxy_core_tray_token_rate_format_combined() },
+  { value: "split", label: () => m.proxy_core_tray_token_rate_format_split() },
+  { value: "both", label: () => m.proxy_core_tray_token_rate_format_both() },
+] as const;
+
+export type TrayTokenRateFormat = (typeof TRAY_TOKEN_RATE_FORMATS)[number]["value"];
+
+export type TrayTokenRateConfig = {
+  enabled: boolean;
+  format: TrayTokenRateFormat;
+};
+
 export type UpstreamConfig = {
   id: string;
   provider: string;
@@ -18,15 +31,18 @@ export type UpstreamConfig = {
   model_mappings: Record<string, string>;
 };
 
-export type ProxyConfigFile = {
+export type ProxyConfigFileBase = {
   host: string;
   port: number;
   local_api_key: string | null;
   log_path: string;
+  tray_token_rate: TrayTokenRateConfig;
   enable_api_format_conversion: boolean;
   upstream_strategy: UpstreamStrategy;
   upstreams: UpstreamConfig[];
 };
+
+export type ProxyConfigFile = ProxyConfigFileBase & Record<string, unknown>;
 
 export type ConfigResponse = {
   path: string;
@@ -65,6 +81,7 @@ export type ConfigForm = {
   port: string;
   localApiKey: string;
   logPath: string;
+  trayTokenRate: TrayTokenRateConfig;
   enableApiFormatConversion: boolean;
   upstreamStrategy: UpstreamStrategy;
   upstreams: UpstreamForm[];

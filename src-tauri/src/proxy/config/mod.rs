@@ -11,6 +11,8 @@ pub(crate) use types::{
     ProxyConfig,
     ProxyConfigFile,
     ProviderUpstreams,
+    TrayTokenRateConfig,
+    TrayTokenRateFormat,
     UpstreamConfig,
     UpstreamGroup,
     UpstreamRuntime,

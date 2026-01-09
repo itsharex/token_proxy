@@ -3,7 +3,7 @@ use sqlx::SqlitePool;
 use std::future::IntoFuture;
 use std::sync::Arc;
 use std::time::Duration;
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 use tokio::sync::{Mutex, RwLock};
 use tokio::task::JoinHandle;
 use tokio::time::timeout;
@@ -296,7 +296,7 @@ async fn build_router_state(
 }
 
 async fn build_proxy_state(
-    _app: &AppHandle,
+    app: &AppHandle,
     config: ProxyConfig,
     sqlite_pool: Option<SqlitePool>,
 ) -> Result<Arc<ProxyState>, String> {
@@ -307,10 +307,15 @@ async fn build_proxy_state(
     );
     let client = reqwest::Client::new();
     let cursors = server::build_upstream_cursors(&config);
+    let token_rate = app
+        .state::<Arc<super::token_rate::TokenRateTracker>>()
+        .inner()
+        .clone();
     Ok(Arc::new(ProxyState {
         config,
         client,
         log,
         cursors,
+        token_rate,
     }))
 }

@@ -3,10 +3,9 @@ use axum::{
     http::{HeaderMap, StatusCode},
     response::Response,
 };
-use futures_util::{stream::try_unfold, StreamExt};
-use serde_json::{json, Value};
+use futures_util::StreamExt;
+use serde_json::Value;
 use std::{
-    collections::VecDeque,
     sync::Arc,
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
@@ -16,13 +15,14 @@ use super::{
     log::{build_log_entry, LogContext, LogWriter},
     model,
     openai_compat::{transform_response_body, FormatTransform},
-    sse::SseEventParser,
-    usage::{extract_usage_from_response, SseUsageCollector},
+    token_rate::{RequestTokenTracker, TokenRateTracker},
+    usage::extract_usage_from_response,
     RequestMeta,
 };
 
 const PROVIDER_OPENAI: &str = "openai";
 const PROVIDER_OPENAI_RESPONSES: &str = "openai-response";
+const PROVIDER_ANTHROPIC: &str = "anthropic";
 const PROVIDER_GEMINI: &str = "gemini";
 
 pub(super) async fn build_proxy_response(
@@ -32,6 +32,7 @@ pub(super) async fn build_proxy_response(
     inbound_path: &str,
     upstream_res: reqwest::Response,
     log: Arc<LogWriter>,
+    token_rate: Arc<TokenRateTracker>,
     start: Instant,
     response_transform: FormatTransform,
 ) -> Response {
@@ -53,6 +54,12 @@ pub(super) async fn build_proxy_response(
         // The body will change; let hyper recalculate the content length.
         response_headers.remove(axum::http::header::CONTENT_LENGTH);
     }
+    let model_for_tokens = meta
+        .mapped_model
+        .as_deref()
+        .or(meta.original_model.as_deref())
+        .map(|value| value.to_string());
+    let request_tracker = token_rate.register(model_for_tokens, meta.estimated_input_tokens);
     if meta.stream {
         build_stream_response(
             status,
@@ -60,6 +67,7 @@ pub(super) async fn build_proxy_response(
             response_headers,
             context,
             log,
+            request_tracker,
             response_transform,
             model_override,
         )
@@ -71,6 +79,7 @@ pub(super) async fn build_proxy_response(
             response_headers,
             context,
             log,
+            request_tracker,
             response_transform,
             model_override,
         )
@@ -85,6 +94,7 @@ pub(super) async fn build_proxy_response_buffered(
     inbound_path: &str,
     upstream_res: reqwest::Response,
     log: Arc<LogWriter>,
+    token_rate: Arc<TokenRateTracker>,
     start: Instant,
     response_transform: FormatTransform,
 ) -> Response {
@@ -105,12 +115,19 @@ pub(super) async fn build_proxy_response_buffered(
     if response_transform != FormatTransform::None {
         response_headers.remove(axum::http::header::CONTENT_LENGTH);
     }
+    let model_for_tokens = meta
+        .mapped_model
+        .as_deref()
+        .or(meta.original_model.as_deref())
+        .map(|value| value.to_string());
+    let request_tracker = token_rate.register(model_for_tokens, meta.estimated_input_tokens);
     build_buffered_response(
         status,
         upstream_res,
         response_headers,
         context,
         log,
+        request_tracker,
         response_transform,
         model_override,
     )
@@ -123,6 +140,7 @@ async fn build_stream_response(
     headers: HeaderMap,
     context: LogContext,
     log: Arc<LogWriter>,
+    request_tracker: RequestTokenTracker,
     response_transform: FormatTransform,
     model_override: Option<&str>,
 ) -> Response {
@@ -130,25 +148,45 @@ async fn build_stream_response(
         FormatTransform::None => {
             if let Some(model_override) = model_override {
                 if should_rewrite_sse_model(&context.provider) {
-                    stream_with_logging_and_model_override(
+                    streaming::stream_with_logging_and_model_override(
                         upstream_res.bytes_stream(),
                         context,
                         log,
                         model_override.to_string(),
+                        request_tracker,
                     )
                     .boxed()
                 } else {
-                    stream_with_logging(upstream_res.bytes_stream(), context, log).boxed()
+                    streaming::stream_with_logging(
+                        upstream_res.bytes_stream(),
+                        context,
+                        log,
+                        request_tracker,
+                    )
+                        .boxed()
                 }
             } else {
-                stream_with_logging(upstream_res.bytes_stream(), context, log).boxed()
+                streaming::stream_with_logging(
+                    upstream_res.bytes_stream(),
+                    context,
+                    log,
+                    request_tracker,
+                )
+                    .boxed()
             }
         }
         FormatTransform::ResponsesToChat => {
-            stream_responses_to_chat(upstream_res.bytes_stream(), context, log).boxed()
+            responses_to_chat::stream_responses_to_chat(
+                upstream_res.bytes_stream(),
+                context,
+                log,
+                request_tracker,
+            )
+                .boxed()
         }
         FormatTransform::ChatToResponses => {
-            stream_chat_to_responses(upstream_res.bytes_stream(), context, log).boxed()
+            stream_chat_to_responses(upstream_res.bytes_stream(), context, log, request_tracker)
+                .boxed()
         }
     };
     let body = Body::from_stream(stream);
@@ -161,6 +199,7 @@ async fn build_buffered_response(
     headers: HeaderMap,
     context: LogContext,
     log: Arc<LogWriter>,
+    mut request_tracker: RequestTokenTracker,
     response_transform: FormatTransform,
     model_override: Option<&str>,
 ) -> Response {
@@ -192,6 +231,7 @@ async fn build_buffered_response(
     };
 
     let output = maybe_override_response_model(output, model_override);
+    apply_output_tokens_from_response(&mut request_tracker, &context.provider, &output);
 
     http::build_response(status, headers, Body::from(output))
 }
@@ -210,18 +250,6 @@ fn maybe_override_response_model(bytes: Bytes, model_override: Option<&str>) -> 
     model::rewrite_response_model(&bytes, model_override).unwrap_or(bytes)
 }
 
-fn stream_responses_to_chat(
-    upstream: impl futures_util::stream::Stream<Item = Result<Bytes, reqwest::Error>>
-        + Unpin
-        + Send
-        + 'static,
-    context: LogContext,
-    log: Arc<LogWriter>,
-) -> impl futures_util::stream::Stream<Item = Result<Bytes, std::io::Error>> + Send {
-    let state = ResponsesToChatState::new(upstream, context, log);
-    try_unfold(state, |state| async move { state.step().await })
-}
-
 fn stream_chat_to_responses(
     upstream: impl futures_util::stream::Stream<Item = Result<Bytes, reqwest::Error>>
         + Unpin
@@ -229,181 +257,9 @@ fn stream_chat_to_responses(
         + 'static,
     context: LogContext,
     log: Arc<LogWriter>,
+    token_tracker: RequestTokenTracker,
 ) -> impl futures_util::stream::Stream<Item = Result<Bytes, std::io::Error>> + Send {
-    chat_to_responses::stream_chat_to_responses(upstream, context, log)
-}
-
-struct ResponsesToChatState<S> {
-    upstream: S,
-    parser: SseEventParser,
-    collector: SseUsageCollector,
-    log: Arc<LogWriter>,
-    context: LogContext,
-    out: VecDeque<Bytes>,
-    chat_id: String,
-    created: i64,
-    model: String,
-    sent_role: bool,
-    sent_done: bool,
-    logged: bool,
-    upstream_ended: bool,
-}
-
-impl<S> ResponsesToChatState<S>
-where
-    S: futures_util::stream::Stream<Item = Result<Bytes, reqwest::Error>> + Unpin + Send + 'static,
-{
-    fn new(upstream: S, context: LogContext, log: Arc<LogWriter>) -> Self {
-        let now_ms = now_ms();
-        Self {
-            upstream,
-            parser: SseEventParser::new(),
-            collector: SseUsageCollector::new(),
-            log,
-            model: context
-                .model
-                .clone()
-                .unwrap_or_else(|| "unknown".to_string()),
-            context,
-            out: VecDeque::new(),
-            chat_id: format!("chatcmpl_proxy_{now_ms}"),
-            created: (now_ms / 1000) as i64,
-            sent_role: false,
-            sent_done: false,
-            logged: false,
-            upstream_ended: false,
-        }
-    }
-
-    async fn step(mut self) -> Result<Option<(Bytes, Self)>, std::io::Error> {
-        loop {
-            if let Some(next) = self.out.pop_front() {
-                return Ok(Some((next, self)));
-            }
-
-            if self.upstream_ended {
-                return Ok(None);
-            }
-
-            match self.upstream.next().await {
-                Some(Ok(chunk)) => {
-                    self.collector.push_chunk(&chunk);
-                    let mut events = Vec::new();
-                    self.parser.push_chunk(&chunk, |data| events.push(data));
-                    for data in events {
-                        self.handle_event(&data);
-                    }
-                }
-                Some(Err(err)) => {
-                    self.log_usage_once().await;
-                    return Err(std::io::Error::new(std::io::ErrorKind::Other, err));
-                }
-                None => {
-                    self.upstream_ended = true;
-                    let mut events = Vec::new();
-                    self.parser.finish(|data| events.push(data));
-                    for data in events {
-                        self.handle_event(&data);
-                    }
-                    if !self.sent_done {
-                        self.push_done();
-                    }
-                    self.log_usage_once().await;
-                    if self.out.is_empty() {
-                        return Ok(None);
-                    }
-                }
-            }
-        }
-    }
-
-    fn handle_event(&mut self, data: &str) {
-        if self.sent_done {
-            return;
-        }
-        if data == "[DONE]" {
-            self.push_done();
-            return;
-        }
-        let Ok(value) = serde_json::from_str::<Value>(data) else {
-            return;
-        };
-        let Some(event_type) = value.get("type").and_then(Value::as_str) else {
-            return;
-        };
-        if !event_type.ends_with("output_text.delta") {
-            return;
-        }
-        let Some(delta) = value.get("delta").and_then(Value::as_str) else {
-            return;
-        };
-
-        if !self.sent_role {
-            self.sent_role = true;
-            self.out.push_back(chat_chunk_sse(
-                &self.chat_id,
-                self.created,
-                &self.model,
-                json!({ "role": "assistant", "content": "" }),
-                None,
-            ));
-        }
-
-        self.out.push_back(chat_chunk_sse(
-            &self.chat_id,
-            self.created,
-            &self.model,
-            json!({ "content": delta }),
-            None,
-        ));
-    }
-
-    fn push_done(&mut self) {
-        if self.sent_done {
-            return;
-        }
-        self.sent_done = true;
-        self.out.push_back(chat_chunk_sse(
-            &self.chat_id,
-            self.created,
-            &self.model,
-            json!({}),
-            Some("stop"),
-        ));
-        self.out.push_back(Bytes::from("data: [DONE]\n\n"));
-    }
-
-    async fn log_usage_once(&mut self) {
-        if self.logged {
-            return;
-        }
-        self.logged = true;
-        let entry = build_log_entry(&self.context, self.collector.finish());
-        self.log.write(&entry).await;
-    }
-}
-
-fn chat_chunk_sse(
-    id: &str,
-    created: i64,
-    model: &str,
-    delta: Value,
-    finish_reason: Option<&str>,
-) -> Bytes {
-    let chunk = json!({
-        "id": id,
-        "object": "chat.completion.chunk",
-        "created": created,
-        "model": model,
-        "choices": [
-            {
-                "index": 0,
-                "delta": delta,
-                "finish_reason": finish_reason
-            }
-        ]
-    });
-    Bytes::from(format!("data: {}\n\n", chunk.to_string()))
+    chat_to_responses::stream_chat_to_responses(upstream, context, log, token_tracker)
 }
 
 fn responses_event_sse(event: Value) -> Bytes {
@@ -417,142 +273,90 @@ fn now_ms() -> u64 {
         .as_millis() as u64
 }
 
-fn stream_with_logging(
-    upstream: impl futures_util::stream::Stream<Item = Result<Bytes, reqwest::Error>>
-        + Unpin
-        + Send
-        + 'static,
-    context: LogContext,
-    log: Arc<LogWriter>,
-) -> impl futures_util::stream::Stream<Item = Result<Bytes, std::io::Error>> + Send {
-    let collector = SseUsageCollector::new();
-    try_unfold(
-        (upstream, collector, log, context),
-        |(mut upstream, mut collector, log, context)| async move {
-            match upstream.next().await {
-                Some(Ok(chunk)) => {
-                    collector.push_chunk(&chunk);
-                    Ok(Some((chunk, (upstream, collector, log, context))))
-                }
-                Some(Err(err)) => {
-                    let entry = build_log_entry(&context, collector.finish());
-                    log.write(&entry).await;
-                    Err(std::io::Error::new(std::io::ErrorKind::Other, err))
-                }
-                None => {
-                    let entry = build_log_entry(&context, collector.finish());
-                    log.write(&entry).await;
-                    Ok(None)
-                }
-            }
-        },
-    )
-}
+fn apply_output_tokens_from_response(
+    tracker: &mut RequestTokenTracker,
+    provider: &str,
+    bytes: &Bytes,
+) {
+    let Ok(value) = serde_json::from_slice::<Value>(bytes) else {
+        return;
+    };
 
-fn stream_with_logging_and_model_override(
-    upstream: impl futures_util::stream::Stream<Item = Result<Bytes, reqwest::Error>>
-        + Unpin
-        + Send
-        + 'static,
-    context: LogContext,
-    log: Arc<LogWriter>,
-    model_override: String,
-) -> impl futures_util::stream::Stream<Item = Result<Bytes, std::io::Error>> + Send {
-    let state = ModelOverrideStreamState::new(upstream, context, log, model_override);
-    try_unfold(state, |state| async move { state.step().await })
-}
-
-struct ModelOverrideStreamState<S> {
-    upstream: S,
-    parser: SseEventParser,
-    collector: SseUsageCollector,
-    log: Arc<LogWriter>,
-    context: LogContext,
-    out: VecDeque<Bytes>,
-    model_override: String,
-    upstream_ended: bool,
-    logged: bool,
-}
-
-impl<S> ModelOverrideStreamState<S>
-where
-    S: futures_util::stream::Stream<Item = Result<Bytes, reqwest::Error>> + Unpin + Send + 'static,
-{
-    fn new(upstream: S, context: LogContext, log: Arc<LogWriter>, model_override: String) -> Self {
-        Self {
-            upstream,
-            parser: SseEventParser::new(),
-            collector: SseUsageCollector::new(),
-            log,
-            context,
-            out: VecDeque::new(),
-            model_override,
-            upstream_ended: false,
-            logged: false,
-        }
-    }
-
-    async fn step(mut self) -> Result<Option<(Bytes, Self)>, std::io::Error> {
-        loop {
-            if let Some(next) = self.out.pop_front() {
-                return Ok(Some((next, self)));
-            }
-            if self.upstream_ended {
-                self.log_usage_once().await;
-                return Ok(None);
-            }
-
-            match self.upstream.next().await {
-                Some(Ok(chunk)) => {
-                    self.collector.push_chunk(&chunk);
-                    let mut events = Vec::new();
-                    self.parser.push_chunk(&chunk, |data| events.push(data));
-                    for data in events {
-                        self.push_event(&data);
+    match provider {
+        PROVIDER_OPENAI | PROVIDER_OPENAI_RESPONSES => {
+            if let Some(choices) = value.get("choices").and_then(Value::as_array) {
+                for choice in choices {
+                    if let Some(content) = choice.get("message").and_then(|message| message.get("content")) {
+                        if let Some(text) = content.as_str() {
+                            tracker.add_output_text(text);
+                        } else if let Some(parts) = content.as_array() {
+                            for part in parts {
+                                if let Some(text) = part.get("text").and_then(Value::as_str) {
+                                    tracker.add_output_text(text);
+                                }
+                            }
+                        }
+                    }
+                    if let Some(text) = choice.get("text").and_then(Value::as_str) {
+                        tracker.add_output_text(text);
                     }
                 }
-                Some(Err(err)) => {
-                    self.log_usage_once().await;
-                    return Err(std::io::Error::new(std::io::ErrorKind::Other, err));
+                return;
+            }
+            if let Some(output) = value.get("output").and_then(Value::as_array) {
+                apply_responses_output(tracker, output);
+                return;
+            }
+        }
+        PROVIDER_ANTHROPIC => {
+            if let Some(content) = value.get("content").and_then(Value::as_array) {
+                for item in content {
+                    if let Some(text) = item.get("text").and_then(Value::as_str) {
+                        tracker.add_output_text(text);
+                    }
                 }
-                None => {
-                    self.upstream_ended = true;
-                    let mut events = Vec::new();
-                    self.parser.finish(|data| events.push(data));
-                    for data in events {
-                        self.push_event(&data);
+                return;
+            }
+        }
+        PROVIDER_GEMINI => {
+            if let Some(candidates) = value.get("candidates").and_then(Value::as_array) {
+                apply_gemini_output(tracker, candidates);
+                return;
+            }
+        }
+        _ => {}
+    }
+}
+
+fn apply_responses_output(tracker: &mut RequestTokenTracker, output: &[Value]) {
+    for item in output {
+        if let Some(content) = item.get("content").and_then(Value::as_array) {
+            for part in content {
+                if let Some(text) = part.get("text").and_then(Value::as_str) {
+                    tracker.add_output_text(text);
+                }
+            }
+        }
+    }
+}
+
+fn apply_gemini_output(tracker: &mut RequestTokenTracker, candidates: &[Value]) {
+    for candidate in candidates {
+        if let Some(content) = candidate.get("content") {
+            if let Some(parts) = content.get("parts").and_then(Value::as_array) {
+                for part in parts {
+                    if let Some(text) = part.get("text").and_then(Value::as_str) {
+                        tracker.add_output_text(text);
                     }
                 }
             }
         }
     }
-
-    fn push_event(&mut self, data: &str) {
-        let output = rewrite_sse_data(data, &self.model_override);
-        self.out.push_back(Bytes::from(format!("data: {output}\n\n")));
-    }
-
-    async fn log_usage_once(&mut self) {
-        if self.logged {
-            return;
-        }
-        let entry = build_log_entry(&self.context, self.collector.finish());
-        self.log.write(&entry).await;
-        self.logged = true;
-    }
-}
-
-fn rewrite_sse_data(data: &str, model_override: &str) -> String {
-    if data == "[DONE]" {
-        return data.to_string();
-    }
-    let bytes = Bytes::copy_from_slice(data.as_bytes());
-    model::rewrite_response_model(&bytes, model_override)
-        .and_then(|bytes| String::from_utf8(bytes.to_vec()).ok())
-        .unwrap_or_else(|| data.to_string())
 }
 
 mod chat_to_responses;
+mod responses_to_chat;
+mod streaming;
 
 #[cfg(test)]
 mod tests;

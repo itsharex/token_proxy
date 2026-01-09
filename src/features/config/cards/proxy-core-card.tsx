@@ -3,9 +3,20 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { PasswordInput } from "@/components/ui/password-input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { ProxyServicePanel, type ProxyServiceViewProps } from "@/features/config/cards/proxy-service-card";
-import type { ConfigForm } from "@/features/config/types";
+import {
+  type ConfigForm,
+  type TrayTokenRateFormat,
+  TRAY_TOKEN_RATE_FORMATS,
+} from "@/features/config/types";
 import { m } from "@/paraglide/messages.js";
 
 type ProxyCoreCardProps = {
@@ -102,6 +113,70 @@ function ProxyCoreFormatConversion({ enabled, onToggle }: ProxyCoreFormatConvers
   );
 }
 
+const TRAY_TOKEN_RATE_FORMAT_VALUES: ReadonlySet<string> = new Set(
+  TRAY_TOKEN_RATE_FORMATS.map((format) => format.value)
+);
+
+function toTrayTokenRateFormat(value: string): TrayTokenRateFormat | null {
+  return TRAY_TOKEN_RATE_FORMAT_VALUES.has(value) ? (value as TrayTokenRateFormat) : null;
+}
+
+type ProxyCoreTrayTokenRateProps = {
+  value: ConfigForm["trayTokenRate"];
+  onChange: (value: ConfigForm["trayTokenRate"]) => void;
+};
+
+function ProxyCoreTrayTokenRate({ value, onChange }: ProxyCoreTrayTokenRateProps) {
+  return (
+    <div className="rounded-md border border-border/60 bg-background/60 p-3">
+      <div className="flex items-start justify-between gap-4">
+        <div className="space-y-1">
+          <p className="text-sm font-medium text-foreground">
+            {m.proxy_core_tray_token_rate_title()}
+          </p>
+          <p className="text-xs text-muted-foreground">
+            {m.proxy_core_tray_token_rate_desc()}
+          </p>
+        </div>
+        <Switch
+          checked={value.enabled}
+          onCheckedChange={(checked) => onChange({ ...value, enabled: checked })}
+          aria-label={m.proxy_core_tray_token_rate_aria()}
+        />
+      </div>
+      <div className="mt-3 grid gap-2">
+        <Label htmlFor="tray-token-rate-format">
+          {m.proxy_core_tray_token_rate_format_label()}
+        </Label>
+        <Select
+          value={value.format}
+          onValueChange={(nextValue) => {
+            const nextFormat = toTrayTokenRateFormat(nextValue);
+            if (nextFormat) {
+              onChange({ ...value, format: nextFormat });
+            }
+          }}
+          disabled={!value.enabled}
+        >
+          <SelectTrigger id="tray-token-rate-format">
+            <SelectValue placeholder={m.proxy_core_tray_token_rate_format_placeholder()} />
+          </SelectTrigger>
+          <SelectContent>
+            {TRAY_TOKEN_RATE_FORMATS.map((option) => (
+              <SelectItem key={option.value} value={option.value}>
+                {option.label()}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <p className="text-xs text-muted-foreground">
+          {m.proxy_core_tray_token_rate_macos_only()}
+        </p>
+      </div>
+    </div>
+  );
+}
+
 type ProxyCoreServiceSectionProps = {
   proxyService: ProxyServiceViewProps;
 };
@@ -140,6 +215,10 @@ export function ProxyCoreCard({
         <ProxyCoreFormatConversion
           enabled={form.enableApiFormatConversion}
           onToggle={(checked) => onChange({ enableApiFormatConversion: checked })}
+        />
+        <ProxyCoreTrayTokenRate
+          value={form.trayTokenRate}
+          onChange={(nextValue) => onChange({ trayTokenRate: nextValue })}
         />
         <ProxyCoreServiceSection proxyService={proxyService} />
       </CardContent>

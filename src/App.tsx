@@ -1,4 +1,4 @@
-import { ConfigScreen } from "@/features/config/ConfigScreen";
+import { Outlet } from "@tanstack/react-router";
 import { useI18n } from "@/lib/i18n";
 
 import "./App.css";
@@ -10,7 +10,7 @@ function App() {
   return (
     <main className="app-shell">
       <div data-slot="app-shell" className="relative z-10 h-full min-h-0">
-        <ConfigScreen />
+        <Outlet />
       </div>
     </main>
   );

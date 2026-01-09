@@ -3,9 +3,10 @@ use futures_util::StreamExt;
 use serde_json::{json, Value};
 use std::{collections::VecDeque, sync::Arc};
 
-use super::SseEventParser;
-use super::SseUsageCollector;
-use super::{build_log_entry, LogContext, LogWriter};
+use super::super::log::{build_log_entry, LogContext, LogWriter};
+use super::super::sse::SseEventParser;
+use super::super::token_rate::RequestTokenTracker;
+use super::super::usage::SseUsageCollector;
 use format::{snapshot_to_output_item, usage_to_value, OutputItemSnapshot};
 
 mod format;
@@ -17,8 +18,9 @@ pub(super) fn stream_chat_to_responses(
         + 'static,
     context: LogContext,
     log: Arc<LogWriter>,
+    token_tracker: RequestTokenTracker,
 ) -> impl futures_util::stream::Stream<Item = Result<Bytes, std::io::Error>> + Send {
-    let state = ChatToResponsesState::new(upstream, context, log);
+    let state = ChatToResponsesState::new(upstream, context, log, token_tracker);
     futures_util::stream::try_unfold(state, |state| async move { state.step().await })
 }
 
@@ -42,6 +44,7 @@ struct ChatToResponsesState<S> {
     collector: SseUsageCollector,
     log: Arc<LogWriter>,
     context: LogContext,
+    token_tracker: RequestTokenTracker,
     out: VecDeque<Bytes>,
     id_seed: u64,
     response_id: String,
@@ -60,7 +63,12 @@ impl<S> ChatToResponsesState<S>
 where
     S: futures_util::stream::Stream<Item = Result<Bytes, reqwest::Error>> + Unpin + Send + 'static,
 {
-    fn new(upstream: S, context: LogContext, log: Arc<LogWriter>) -> Self {
+    fn new(
+        upstream: S,
+        context: LogContext,
+        log: Arc<LogWriter>,
+        token_tracker: RequestTokenTracker,
+    ) -> Self {
         let now_ms = super::now_ms();
         let created_at = (now_ms / 1000) as i64;
         let model = context
@@ -74,6 +82,7 @@ where
             collector: SseUsageCollector::new(),
             log,
             context,
+            token_tracker,
             out: VecDeque::new(),
             id_seed: now_ms,
             response_id: format!("resp_{now_ms}"),
@@ -174,6 +183,7 @@ where
             message.text.push_str(delta);
             (message.id.clone(), message.output_index)
         };
+        self.token_tracker.add_output_text(delta);
 
         let sequence_number = self.next_sequence_number();
         self.out.push_back(super::responses_event_sse(json!({

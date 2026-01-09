@@ -154,7 +154,7 @@ export function DashboardScreen({ variant = "standalone", headerLeading }: Dashb
   }, [page, pagination.page]);
 
   const content = (
-    <div className="space-y-6 p-6">
+    <div className="space-y-6 py-6 pr-6">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div className="min-w-0">
           <h1 className="title-font truncate text-2xl font-semibold text-foreground">

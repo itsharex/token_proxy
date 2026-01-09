@@ -236,6 +236,7 @@ async fn attempt_upstream(
         &upstream.id,
         inbound_path,
         state.log.clone(),
+        state.token_rate.clone(),
         start_time,
         response_transform,
     )
@@ -297,6 +298,7 @@ async fn handle_upstream_result(
     upstream_id: &str,
     inbound_path: &str,
     log: Arc<LogWriter>,
+    token_rate: Arc<super::token_rate::TokenRateTracker>,
     start_time: Instant,
     response_transform: FormatTransform,
 ) -> AttemptOutcome {
@@ -309,6 +311,7 @@ async fn handle_upstream_result(
                 inbound_path,
                 res,
                 log,
+                token_rate,
                 start_time,
                 response_transform,
             )
@@ -326,6 +329,7 @@ async fn handle_upstream_result(
                 inbound_path,
                 res,
                 log,
+                token_rate,
                 start_time,
                 response_transform,
             )
@@ -352,6 +356,7 @@ fn build_mapped_meta(meta: &RequestMeta, upstream: &UpstreamRuntime) -> RequestM
         stream: meta.stream,
         original_model: meta.original_model.clone(),
         mapped_model,
+        estimated_input_tokens: meta.estimated_input_tokens,
     }
 }
 
