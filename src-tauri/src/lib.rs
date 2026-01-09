@@ -173,7 +173,7 @@ pub fn run() {
     init_tracing();
     tracing::info!("starting token_proxy application");
 
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             let token_rate = proxy::token_rate::TokenRateTracker::new();
@@ -214,8 +214,11 @@ pub fn run() {
                 if tray_state.as_ref().map(|state| state.should_quit()).unwrap_or(false) {
                     return;
                 }
+                // 关闭即销毁 WebView，后台核心继续运行。
                 api.prevent_close();
-                let _ = window.hide();
+                if let Err(err) = window.destroy() {
+                    tracing::warn!(error = %err, "destroy window failed");
+                }
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -228,6 +231,17 @@ pub fn run() {
             proxy_restart,
             proxy_reload,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application");
+
+    app.run(|app_handle, event| {
+        if let tauri::RunEvent::ExitRequested { api, .. } = event {
+            let tray_state = app_handle.try_state::<tray::TrayState>();
+            if tray_state.as_ref().map(|state| state.should_quit()).unwrap_or(false) {
+                return;
+            }
+            // 仅关闭窗口时阻止退出，允许托盘“退出”彻底结束进程。
+            api.prevent_exit();
+        }
+    });
 }
