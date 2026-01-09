@@ -9,6 +9,7 @@ use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{TrayIcon, TrayIconBuilder};
 use tauri::{AppHandle, Manager};
 
+use crate::show_or_create_main_window;
 use crate::proxy::config::{TrayTokenRateConfig, TrayTokenRateFormat};
 use crate::proxy::service::{ProxyServiceHandle, ProxyServiceState, ProxyServiceStatus};
 #[cfg(target_os = "macos")]
@@ -334,33 +335,6 @@ pub(crate) fn init_tray(
     tray_state.ensure_token_rate_loop();
 
     Ok(tray_state)
-}
-
-fn show_or_create_main_window(app: &AppHandle) {
-    if let Some(window) = app.get_webview_window("main") {
-        let _ = window.unminimize();
-        let _ = window.show();
-        let _ = window.set_focus();
-        return;
-    }
-
-    let Some(config) = app.config().app.windows.get(0).cloned() else {
-        tracing::warn!("main window config not found");
-        return;
-    };
-
-    // Windows 同步创建可能死锁，放到独立线程中。
-    let app_handle = app.clone();
-    std::thread::spawn(move || {
-        if let Err(err) =
-            tauri::WebviewWindowBuilder::from_config(&app_handle, &config).and_then(|builder| {
-                builder.build()?;
-                Ok(())
-            })
-        {
-            tracing::warn!(error = %err, "create main window failed");
-        }
-    });
 }
 
 #[cfg(target_os = "macos")]

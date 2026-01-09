@@ -10,6 +10,63 @@ use tracing_subscriber::{fmt, EnvFilter};
 type ProxyServiceHandle = proxy::service::ProxyServiceHandle;
 type ProxyServiceStatus = proxy::service::ProxyServiceStatus;
 
+pub(crate) const MAIN_WINDOW_LABEL: &str = "main";
+
+// 主窗口显示/销毁时同步 Dock/任务栏展示状态。
+pub(crate) fn set_main_window_visibility(app: &tauri::AppHandle, visible: bool) {
+    #[cfg(target_os = "macos")]
+    {
+        let policy = if visible {
+            tauri::ActivationPolicy::Regular
+        } else {
+            tauri::ActivationPolicy::Accessory
+        };
+        if let Err(err) = app.set_activation_policy(policy) {
+            tracing::warn!(error = %err, visible, "set activation policy failed");
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        let Some(window) = app.get_window(MAIN_WINDOW_LABEL) else {
+            return;
+        };
+        if let Err(err) = window.set_skip_taskbar(!visible) {
+            tracing::warn!(error = %err, visible, "set skip taskbar failed");
+        }
+    }
+}
+
+pub(crate) fn show_or_create_main_window(app: &tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
+        set_main_window_visibility(app, true);
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+        return;
+    }
+
+    let Some(config) = app.config().app.windows.get(0).cloned() else {
+        tracing::warn!("main window config not found");
+        return;
+    };
+
+    // Windows 同步创建可能死锁，放到独立线程中。
+    let app_handle = app.clone();
+    std::thread::spawn(move || {
+        let result =
+            tauri::WebviewWindowBuilder::from_config(&app_handle, &config).and_then(|builder| {
+                builder.build()?;
+                Ok(())
+            });
+        if let Err(err) = result {
+            tracing::warn!(error = %err, "create main window failed");
+            return;
+        }
+        set_main_window_visibility(&app_handle, true);
+    });
+}
+
 #[tauri::command]
 async fn read_proxy_config(app: tauri::AppHandle) -> Result<proxy::config::ConfigResponse, String> {
     proxy::config::read_config(app).await
@@ -184,9 +241,6 @@ pub fn run() {
             let tray_state = tray::init_tray(&app_handle, proxy_service.clone())?;
             app.manage(tray_state.clone());
 
-            #[cfg(target_os = "macos")]
-            app.set_activation_policy(tauri::ActivationPolicy::Accessory);
-
             let tray_state_for_config = tray_state.clone();
             let app_handle_for_config = app_handle.clone();
             tauri::async_runtime::spawn(async move {
@@ -208,18 +262,27 @@ pub fn run() {
             });
             Ok(())
         })
-        .on_window_event(|window, event| {
-            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+        .on_window_event(|window, event| match event {
+            tauri::WindowEvent::Focused(true) => {
+                if window.label() == MAIN_WINDOW_LABEL {
+                    set_main_window_visibility(window.app_handle(), true);
+                }
+            }
+            tauri::WindowEvent::CloseRequested { api, .. } => {
                 let tray_state = window.app_handle().try_state::<tray::TrayState>();
                 if tray_state.as_ref().map(|state| state.should_quit()).unwrap_or(false) {
                     return;
                 }
                 // 关闭即销毁 WebView，后台核心继续运行。
                 api.prevent_close();
+                if window.label() == MAIN_WINDOW_LABEL {
+                    set_main_window_visibility(window.app_handle(), false);
+                }
                 if let Err(err) = window.destroy() {
                     tracing::warn!(error = %err, "destroy window failed");
                 }
             }
+            _ => {}
         })
         .invoke_handler(tauri::generate_handler![
             read_proxy_config,
@@ -234,8 +297,8 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
 
-    app.run(|app_handle, event| {
-        if let tauri::RunEvent::ExitRequested { api, .. } = event {
+    app.run(|app_handle, event| match event {
+        tauri::RunEvent::ExitRequested { api, .. } => {
             let tray_state = app_handle.try_state::<tray::TrayState>();
             if tray_state.as_ref().map(|state| state.should_quit()).unwrap_or(false) {
                 return;
@@ -243,5 +306,13 @@ pub fn run() {
             // 仅关闭窗口时阻止退出，允许托盘“退出”彻底结束进程。
             api.prevent_exit();
         }
+        #[cfg(target_os = "macos")]
+        tauri::RunEvent::Reopen { has_visible_windows, .. } => {
+            // 点击 Dock 重新打开时，恢复主窗口。
+            if !has_visible_windows {
+                show_or_create_main_window(app_handle);
+            }
+        }
+        _ => {}
     });
 }
