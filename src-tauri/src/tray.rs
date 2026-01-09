@@ -255,11 +255,13 @@ pub(crate) fn init_tray(
         &quit_item,
     ])?;
 
+    // 开发环境显示原色，生产环境使用模板图标以适配系统主题。
+    let is_template = !cfg!(debug_assertions);
     let tray = TrayIconBuilder::with_id(TRAY_ID)
         .icon(load_tray_icon()?)
         .tooltip("Token Proxy")
         .show_menu_on_left_click(true)
-        .icon_as_template(true)
+        .icon_as_template(is_template)
         .menu(&menu)
         .build(app)?;
 
