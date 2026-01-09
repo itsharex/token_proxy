@@ -88,7 +88,7 @@ impl TrayState {
                 self.ensure_token_rate_loop();
             } else {
                 self.stop_token_rate_loop();
-                self.set_title(None);
+                self.clear_title();
             }
         }
         // 配置变化也唤醒托盘刷新，避免空闲等待时错过更新。
@@ -137,27 +137,38 @@ impl TrayState {
             .expect("tray token rate config lock poisoned")
             .clone();
         if !config.enabled {
-            self.set_title(None);
+            tracing::debug!("tray update_token_rate_title disabled -> clear");
+            self.clear_title();
             return;
         }
         // 启用后始终显示速率，空闲时自然显示 0。
         let snapshot = self.inner.token_rate.snapshot();
         let title = format_rate_title(snapshot, config.format);
+        tracing::debug!(title = %title, "tray update_token_rate_title set");
         self.set_title(Some(title));
     }
 
     #[cfg(target_os = "macos")]
     fn set_title(&self, title: Option<String>) {
+        tracing::debug!(title = ?title, "tray set_title called");
         let mut last_title = self
             .inner
             .last_title
             .write()
             .expect("tray title lock poisoned");
         if *last_title == title {
+            tracing::debug!(title = ?title, "tray set_title skipped (unchanged)");
             return;
         }
         let _ = self.inner.tray.set_title(title.as_deref());
         *last_title = title;
+        tracing::debug!(title = ?*last_title, "tray set_title applied");
+    }
+
+    #[cfg(target_os = "macos")]
+    fn clear_title(&self) {
+        // Tauri on macOS may not clear title with None; empty string is more reliable.
+        self.set_title(Some(String::new()));
     }
 
     #[cfg(target_os = "macos")]
