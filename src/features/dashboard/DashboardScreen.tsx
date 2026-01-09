@@ -164,7 +164,7 @@ export function DashboardScreen({ variant = "standalone", headerLeading }: Dashb
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {headerLeading}
-          <LanguageSwitcher triggerClassName="h-10 w-[140px]" />
+          <LanguageSwitcher />
           {snapshot?.truncated ? (
             <Badge variant="secondary" className="border border-border/60">
               {m.dashboard_truncated()}

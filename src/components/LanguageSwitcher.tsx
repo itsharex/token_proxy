@@ -1,5 +1,14 @@
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Check, Globe } from "lucide-react";
+
+import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { useI18n } from "@/lib/i18n";
+import { cn } from "@/lib/utils";
 import { m } from "@/paraglide/messages.js";
 import { isLocale, type Locale } from "@/paraglide/runtime.js";
 
@@ -16,29 +25,37 @@ export function LanguageSwitcher({ triggerClassName }: LanguageSwitcherProps) {
   const { locale, setLocale } = useI18n();
 
   return (
-    <Select
-      value={locale}
-      onValueChange={(value) => {
-        if (isLocale(value) && value !== locale) {
-          setLocale(value);
-        }
-      }}
-    >
-      <SelectTrigger
-        data-slot="language-switcher-trigger"
-        className={triggerClassName}
-        aria-label={m.language_label()}
-      >
-        <SelectValue placeholder={m.language_label()} />
-      </SelectTrigger>
-      <SelectContent data-slot="language-switcher-content">
-        {LANGUAGE_OPTIONS.map((option) => (
-          <SelectItem key={option.value} value={option.value}>
-            {option.label}
-          </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          type="button"
+          variant="outline"
+          size="icon"
+          className={cn("h-9 w-9", triggerClassName)}
+          aria-label={m.language_label()}
+        >
+          <Globe className="size-4" aria-hidden="true" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" data-slot="language-switcher-content">
+        {LANGUAGE_OPTIONS.map((option) => {
+          const isActive = option.value === locale;
+          return (
+            <DropdownMenuItem
+              key={option.value}
+              onSelect={() => {
+                if (isLocale(option.value) && option.value !== locale) {
+                  setLocale(option.value);
+                }
+              }}
+              className={cn("flex items-center justify-between", isActive && "bg-accent")}
+            >
+              <span>{option.label}</span>
+              {isActive ? <Check className="size-4" aria-hidden="true" /> : null}
+            </DropdownMenuItem>
+          );
+        })}
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
-

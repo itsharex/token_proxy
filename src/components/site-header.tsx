@@ -21,7 +21,7 @@ export function SiteHeader({ title, actions }: SiteHeaderProps) {
         <h1 className="text-base font-medium">{title}</h1>
         <div className="ml-auto flex items-center gap-2">
           {actions}
-          <LanguageSwitcher triggerClassName="h-9 w-[140px]" />
+          <LanguageSwitcher />
         </div>
       </div>
     </header>

@@ -1,12 +1,12 @@
-import { useMemo, type CSSProperties } from "react"
-import { AlertCircle, Loader2, RefreshCw } from "lucide-react"
+import { AlertCircle, Loader2, RefreshCw } from "lucide-react";
+import { useMemo, type CSSProperties } from "react";
 
-import { AppSidebar } from "@/components/app-sidebar"
-import { SiteHeader } from "@/components/site-header"
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { Button } from "@/components/ui/button"
-import { ScrollArea } from "@/components/ui/scroll-area"
-import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar"
+import { AppSidebar } from "@/components/app-sidebar";
+import { SiteHeader } from "@/components/site-header";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
 import {
   ConfigFileCard,
   ProxyCoreCard,
@@ -14,61 +14,78 @@ import {
   UpstreamsCard,
   ValidationCard,
   type StatusBadge,
-} from "@/features/config/cards"
-import type { ProxyServiceViewProps } from "@/features/config/cards/proxy-service-card"
-import type { ConfigSection, ConfigSectionId } from "@/features/config/sections"
-import { findSection } from "@/features/config/sections"
-import type { ConfigForm, ProxyServiceRequestState, ProxyServiceStatus } from "@/features/config/types"
-import { DashboardPanel } from "@/features/dashboard/DashboardPanel"
-import { m } from "@/paraglide/messages.js"
+} from "@/features/config/cards";
+import type { ProxyServiceViewProps } from "@/features/config/cards/proxy-service-card";
+import type {
+  ConfigSection,
+  ConfigSectionId,
+} from "@/features/config/sections";
+import { findSection } from "@/features/config/sections";
+import type {
+  ConfigForm,
+  ProxyServiceRequestState,
+  ProxyServiceStatus,
+} from "@/features/config/types";
+import { DashboardPanel } from "@/features/dashboard/DashboardPanel";
+import { m } from "@/paraglide/messages.js";
 
 type AppViewProps = {
-  activeSectionId: ConfigSectionId
-  form: ConfigForm
-  statusBadge: StatusBadge
-  showLocalKey: boolean
-  showUpstreamKeys: boolean
-  providerOptions: string[]
-  configPath: string
-  savedAt: string
-  proxyServiceStatus: ProxyServiceStatus | null
-  proxyServiceRequestState: ProxyServiceRequestState
-  proxyServiceMessage: string
-  status: "idle" | "loading" | "saving" | "saved" | "error"
-  statusMessage: string
-  canSave: boolean
-  isDirty: boolean
-  validation: { valid: boolean; message: string }
-  onToggleLocalKey: () => void
-  onToggleUpstreamKeys: () => void
-  onFormChange: (patch: Partial<ConfigForm>) => void
-  onStrategyChange: (value: ConfigForm["upstreamStrategy"]) => void
-  onAddUpstream: (upstream: ConfigForm["upstreams"][number]) => void
-  onRemoveUpstream: (index: number) => void
-  onChangeUpstream: (index: number, patch: Partial<ConfigForm["upstreams"][number]>) => void
-  onSave: () => void
-  onReset: () => void
-  onReload: () => void
-  onProxyServiceRefresh: () => void
-  onProxyServiceStart: () => void
-  onProxyServiceStop: () => void
-  onProxyServiceRestart: () => void
-  onProxyServiceReload: () => void
-}
+  activeSectionId: ConfigSectionId;
+  form: ConfigForm;
+  statusBadge: StatusBadge;
+  showLocalKey: boolean;
+  showUpstreamKeys: boolean;
+  providerOptions: string[];
+  configPath: string;
+  savedAt: string;
+  proxyServiceStatus: ProxyServiceStatus | null;
+  proxyServiceRequestState: ProxyServiceRequestState;
+  proxyServiceMessage: string;
+  status: "idle" | "loading" | "saving" | "saved" | "error";
+  statusMessage: string;
+  canSave: boolean;
+  isDirty: boolean;
+  validation: { valid: boolean; message: string };
+  onToggleLocalKey: () => void;
+  onToggleUpstreamKeys: () => void;
+  onFormChange: (patch: Partial<ConfigForm>) => void;
+  onStrategyChange: (value: ConfigForm["upstreamStrategy"]) => void;
+  onAddUpstream: (upstream: ConfigForm["upstreams"][number]) => void;
+  onRemoveUpstream: (index: number) => void;
+  onChangeUpstream: (
+    index: number,
+    patch: Partial<ConfigForm["upstreams"][number]>
+  ) => void;
+  onSave: () => void;
+  onReset: () => void;
+  onReload: () => void;
+  onProxyServiceRefresh: () => void;
+  onProxyServiceStart: () => void;
+  onProxyServiceStop: () => void;
+  onProxyServiceRestart: () => void;
+  onProxyServiceReload: () => void;
+};
 
 type ConfigToolbarProps = {
-  section: ConfigSection
-  status: AppViewProps["status"]
-  canSave: boolean
-  isDirty: boolean
-  onReload: () => void
-  onSave: () => void
-}
+  section: ConfigSection;
+  status: AppViewProps["status"];
+  canSave: boolean;
+  isDirty: boolean;
+  onReload: () => void;
+  onSave: () => void;
+};
 
-function ConfigToolbar({ section, status, canSave, isDirty, onReload, onSave }: ConfigToolbarProps) {
-  const isLoading = status === "loading"
-  const isSaving = status === "saving"
-  const canReload = !isLoading && !isDirty
+function ConfigToolbar({
+  section,
+  status,
+  canSave,
+  isDirty,
+  onReload,
+  onSave,
+}: ConfigToolbarProps) {
+  const isLoading = status === "loading";
+  const isSaving = status === "saving";
+  const canReload = !isLoading && !isDirty;
 
   return (
     <div
@@ -76,29 +93,46 @@ function ConfigToolbar({ section, status, canSave, isDirty, onReload, onSave }: 
       className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border/60 bg-background/70 px-4 py-3"
     >
       <div className="min-w-0">
-        <p className="truncate text-sm font-medium text-foreground">{section.label()}</p>
-        <p className="truncate text-xs text-muted-foreground">{section.description()}</p>
+        <p className="truncate text-sm font-medium text-foreground">
+          {section.label()}
+        </p>
+        <p className="truncate text-xs text-muted-foreground">
+          {section.description()}
+        </p>
       </div>
       <div className="flex items-center gap-2">
-        <Button type="button" variant="outline" size="icon" onClick={onReload} disabled={!canReload}>
-          <RefreshCw className={isLoading ? "animate-spin" : undefined} aria-hidden="true" />
+        <Button
+          type="button"
+          variant="outline"
+          size="icon"
+          onClick={onReload}
+          disabled={!canReload}
+        >
+          <RefreshCw
+            className={isLoading ? "animate-spin" : undefined}
+            aria-hidden="true"
+          />
           <span className="sr-only">{m.common_refresh()}</span>
         </Button>
         <Button type="button" onClick={onSave} disabled={!canSave}>
-          {isSaving ? <Loader2 className="animate-spin" aria-hidden="true" /> : m.common_save()}
+          {isSaving ? (
+            <Loader2 className="animate-spin" aria-hidden="true" />
+          ) : (
+            m.common_save()
+          )}
         </Button>
       </div>
     </div>
-  )
+  );
 }
 
 type StatusAlertProps = {
-  statusMessage: string
-}
+  statusMessage: string;
+};
 
 function StatusAlert({ statusMessage }: StatusAlertProps) {
   if (!statusMessage) {
-    return null
+    return null;
   }
   return (
     <Alert variant="destructive" className="mb-4">
@@ -108,17 +142,21 @@ function StatusAlert({ statusMessage }: StatusAlertProps) {
         <AlertDescription>{statusMessage}</AlertDescription>
       </div>
     </Alert>
-  )
+  );
 }
 
 type ConfigSectionContentProps = Omit<AppViewProps, "activeSectionId"> & {
-  activeSectionId: ConfigSectionId
-  proxyService: ProxyServiceViewProps
-}
+  activeSectionId: ConfigSectionId;
+  proxyService: ProxyServiceViewProps;
+};
 
-type ConfigSectionBodyProps = ConfigSectionContentProps
+type ConfigSectionBodyProps = ConfigSectionContentProps;
 
-function ConfigSectionBody({ activeSectionId, proxyService, ...props }: ConfigSectionBodyProps) {
+function ConfigSectionBody({
+  activeSectionId,
+  proxyService,
+  ...props
+}: ConfigSectionBodyProps) {
   switch (activeSectionId) {
     case "core":
       return (
@@ -129,11 +167,14 @@ function ConfigSectionBody({ activeSectionId, proxyService, ...props }: ConfigSe
           onChange={props.onFormChange}
           proxyService={proxyService}
         />
-      )
+      );
     case "strategy":
       return (
-        <StrategyCard strategy={props.form.upstreamStrategy} onChange={props.onStrategyChange} />
-      )
+        <StrategyCard
+          strategy={props.form.upstreamStrategy}
+          onChange={props.onStrategyChange}
+        />
+      );
     case "upstreams":
       return (
         <UpstreamsCard
@@ -145,7 +186,7 @@ function ConfigSectionBody({ activeSectionId, proxyService, ...props }: ConfigSe
           onRemove={props.onRemoveUpstream}
           onChange={props.onChangeUpstream}
         />
-      )
+      );
     case "file":
       return (
         <ConfigFileCard
@@ -154,17 +195,21 @@ function ConfigSectionBody({ activeSectionId, proxyService, ...props }: ConfigSe
           isDirty={props.isDirty}
           onReset={props.onReset}
         />
-      )
+      );
     case "validation":
-      return <ValidationCard form={props.form} validation={props.validation} />
+      return <ValidationCard form={props.form} validation={props.validation} />;
     default:
-      return null
+      return null;
   }
 }
 
-function ConfigSectionContent({ activeSectionId, proxyService, ...props }: ConfigSectionContentProps) {
+function ConfigSectionContent({
+  activeSectionId,
+  proxyService,
+  ...props
+}: ConfigSectionContentProps) {
   if (activeSectionId === "dashboard") {
-    return <DashboardPanel />
+    return <DashboardPanel />;
   }
 
   return (
@@ -184,7 +229,7 @@ function ConfigSectionContent({ activeSectionId, proxyService, ...props }: Confi
         proxyService={proxyService}
       />
     </div>
-  )
+  );
 }
 
 function toProxyServiceViewProps(props: AppViewProps) {
@@ -198,29 +243,33 @@ function toProxyServiceViewProps(props: AppViewProps) {
     onStop: props.onProxyServiceStop,
     onRestart: props.onProxyServiceRestart,
     onReload: props.onProxyServiceReload,
-  }
+  };
 }
 
 export function AppView(props: AppViewProps) {
-  const { activeSectionId, ...viewProps } = props
-  const sectionMeta = useMemo(() => findSection(activeSectionId), [activeSectionId])
-  const proxyService = toProxyServiceViewProps(props)
+  const { activeSectionId, ...viewProps } = props;
+  const sectionMeta = useMemo(
+    () => findSection(activeSectionId),
+    [activeSectionId]
+  );
+  const proxyService = toProxyServiceViewProps(props);
 
   return (
     <SidebarProvider
+      className="h-full"
       style={
         {
-          "--sidebar-width": "calc(var(--spacing) * 72)",
+          "--sidebar-width": "calc(var(--spacing) * 48)",
           "--header-height": "calc(var(--spacing) * 12)",
         } as CSSProperties
       }
     >
-      <AppSidebar variant="inset" />
-      <SidebarInset>
-        <SiteHeader title={sectionMeta.label()} />
-        <div className="flex flex-1 flex-col">
-          <ScrollArea className="flex-1">
+      <AppSidebar />
+      <SidebarInset className="min-h-0 md:m-0 md:ml-0 md:rounded-none md:shadow-none">
+        <div className="flex flex-1 min-h-0 flex-col">
+          <ScrollArea className="flex-1 min-h-0">
             <div className="@container/main flex flex-1 flex-col gap-2">
+              <SiteHeader title={sectionMeta.label()} />
               <div className="flex flex-col gap-4 py-4 md:gap-6 md:py-6">
                 <ConfigSectionContent
                   {...viewProps}
@@ -233,5 +282,5 @@ export function AppView(props: AppViewProps) {
         </div>
       </SidebarInset>
     </SidebarProvider>
-  )
+  );
 }
