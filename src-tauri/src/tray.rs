@@ -141,7 +141,7 @@ impl TrayState {
             self.clear_title();
             return;
         }
-        // 启用后始终显示速率，空闲时自然显示 0。
+        // 启用后始终显示速率；无 token 时展示并发请求数。
         let snapshot = self.inner.token_rate.snapshot();
         let title = format_rate_title(snapshot, config.format);
         tracing::debug!(title = %title, "tray update_token_rate_title set");
@@ -374,13 +374,18 @@ fn start_token_rate_loop(tray_state: TrayState, loop_id: u64) {
 }
 
 fn format_rate_title(snapshot: TokenRateSnapshot, format: TrayTokenRateFormat) -> String {
+    let has_tokens = snapshot.total > 0;
+    let total_display = if has_tokens { snapshot.total } else { snapshot.connections };
+    let split_input_display = if has_tokens { snapshot.input } else { snapshot.connections };
+    let both_input_display = if has_tokens { snapshot.input } else { 0 };
+    let split_output_display = snapshot.output;
+    let both_output_display = if has_tokens { snapshot.output } else { 0 };
     match format {
-        TrayTokenRateFormat::Combined => format!("{}", snapshot.total),
-        TrayTokenRateFormat::Split => format!("↑{} ↓{}", snapshot.input, snapshot.output),
+        TrayTokenRateFormat::Combined => format!("{total_display}"),
+        TrayTokenRateFormat::Split => format!("↑{split_input_display} ↓{split_output_display}"),
         TrayTokenRateFormat::Both => {
             format!(
-                "{} | ↑{} ↓{}",
-                snapshot.total, snapshot.input, snapshot.output
+                "{total_display} | ↑{both_input_display} ↓{both_output_display}"
             )
         }
     }

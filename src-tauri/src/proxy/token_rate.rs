@@ -37,6 +37,7 @@ pub(crate) struct TokenRateSnapshot {
     pub(crate) input: u64,
     pub(crate) output: u64,
     pub(crate) total: u64,
+    pub(crate) connections: u64,
 }
 
 pub(crate) struct RequestTokenTracker {
@@ -150,6 +151,7 @@ impl TokenRateTracker {
                 input: 0,
                 output: 0,
                 total: 0,
+                connections: 0,
             };
         }
         let now = Instant::now();
@@ -174,6 +176,7 @@ impl TokenRateTracker {
             input,
             output,
             total: input.saturating_add(output),
+            connections: self.inner.active.load(Ordering::SeqCst) as u64,
         }
     }
 
