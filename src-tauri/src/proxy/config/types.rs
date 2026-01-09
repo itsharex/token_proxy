@@ -46,7 +46,7 @@ pub(crate) enum TrayTokenRateFormat {
 
 impl Default for TrayTokenRateFormat {
     fn default() -> Self {
-        Self::Combined
+        Self::Split
     }
 }
 

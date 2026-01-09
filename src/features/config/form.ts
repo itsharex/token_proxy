@@ -55,7 +55,7 @@ const DEFAULT_UPSTREAMS: UpstreamForm[] = [
 
 const DEFAULT_TRAY_TOKEN_RATE: TrayTokenRateConfig = {
   enabled: true,
-  format: "combined",
+  format: "split",
 };
 
 const INTEGER_PATTERN = /^-?\d+$/;
