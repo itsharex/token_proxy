@@ -24,14 +24,14 @@ import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import {
   ConfigFileCard,
   ProxyCoreCard,
-  ProxyServiceCard,
   StrategyCard,
   UpstreamsCard,
   ValidationCard,
   type StatusBadge,
 } from "@/features/config/cards";
 import { DashboardScreen } from "@/features/dashboard/DashboardScreen";
-import type { ConfigForm, ProxyServiceStatus } from "@/features/config/types";
+import type { ProxyServiceViewProps } from "@/features/config/cards/proxy-service-card";
+import type { ConfigForm, ProxyServiceRequestState, ProxyServiceStatus } from "@/features/config/types";
 import { cn } from "@/lib/utils";
 import { m } from "@/paraglide/messages.js";
 
@@ -197,7 +197,7 @@ type AppViewProps = {
   configPath: string;
   savedAt: string;
   proxyServiceStatus: ProxyServiceStatus | null;
-  proxyServiceRequestState: "idle" | "working" | "error";
+  proxyServiceRequestState: ProxyServiceRequestState;
   proxyServiceMessage: string;
   status: "idle" | "loading" | "saving" | "saved" | "error";
   statusMessage: string;
@@ -307,12 +307,210 @@ function StatusAlert({ statusMessage }: StatusAlertProps) {
   );
 }
 
+type DashboardTabProps = {
+  sidebarOpen: boolean;
+  onToggleSidebar: () => void;
+};
+
+function DashboardTab({ sidebarOpen, onToggleSidebar }: DashboardTabProps) {
+  return (
+    <TabsContent value="dashboard" className="mt-0">
+      <DashboardScreen
+        variant="embedded"
+        headerLeading={<SidebarToggleButton open={sidebarOpen} onToggle={onToggleSidebar} />}
+      />
+    </TabsContent>
+  );
+}
+
+type CoreTabProps = {
+  form: ConfigForm;
+  showLocalKey: boolean;
+  onToggleLocalKey: () => void;
+  onFormChange: (patch: Partial<ConfigForm>) => void;
+  proxyService: ProxyServiceViewProps;
+};
+
+function CoreTab({
+  form,
+  showLocalKey,
+  onToggleLocalKey,
+  onFormChange,
+  proxyService,
+}: CoreTabProps) {
+  return (
+    <TabsContent value="core" className="mt-0">
+      <ProxyCoreCard
+        form={form}
+        showLocalKey={showLocalKey}
+        onToggleLocalKey={onToggleLocalKey}
+        onChange={onFormChange}
+        proxyService={proxyService}
+      />
+    </TabsContent>
+  );
+}
+
+type StrategyTabProps = {
+  strategy: ConfigForm["upstreamStrategy"];
+  onChange: (value: ConfigForm["upstreamStrategy"]) => void;
+};
+
+function StrategyTab({ strategy, onChange }: StrategyTabProps) {
+  return (
+    <TabsContent value="strategy" className="mt-0">
+      <StrategyCard strategy={strategy} onChange={onChange} />
+    </TabsContent>
+  );
+}
+
+type UpstreamsTabProps = {
+  upstreams: ConfigForm["upstreams"];
+  showApiKeys: boolean;
+  providerOptions: string[];
+  onToggleApiKeys: () => void;
+  onAdd: (upstream: ConfigForm["upstreams"][number]) => void;
+  onRemove: (index: number) => void;
+  onChange: (index: number, patch: Partial<ConfigForm["upstreams"][number]>) => void;
+};
+
+function UpstreamsTab({
+  upstreams,
+  showApiKeys,
+  providerOptions,
+  onToggleApiKeys,
+  onAdd,
+  onRemove,
+  onChange,
+}: UpstreamsTabProps) {
+  return (
+    <TabsContent value="upstreams" className="mt-0">
+      <UpstreamsCard
+        upstreams={upstreams}
+        showApiKeys={showApiKeys}
+        providerOptions={providerOptions}
+        onToggleApiKeys={onToggleApiKeys}
+        onAdd={onAdd}
+        onRemove={onRemove}
+        onChange={onChange}
+      />
+    </TabsContent>
+  );
+}
+
+type FileTabProps = {
+  configPath: string;
+  savedAt: string;
+  isDirty: boolean;
+  onReset: () => void;
+};
+
+function FileTab({ configPath, savedAt, isDirty, onReset }: FileTabProps) {
+  return (
+    <TabsContent value="file" className="mt-0">
+      <ConfigFileCard
+        configPath={configPath}
+        savedAt={savedAt}
+        isDirty={isDirty}
+        onReset={onReset}
+      />
+    </TabsContent>
+  );
+}
+
+type ValidationTabProps = {
+  form: ConfigForm;
+  validation: { valid: boolean; message: string };
+};
+
+function ValidationTab({ form, validation }: ValidationTabProps) {
+  return (
+    <TabsContent value="validation" className="mt-0">
+      <ValidationCard form={form} validation={validation} />
+    </TabsContent>
+  );
+}
+
+type ConfigTabsProps = AppViewProps & { proxyService: ProxyServiceViewProps };
+
+function ConfigTabs({ proxyService, ...props }: ConfigTabsProps) {
+  return (
+    <div className="p-6">
+      <StatusAlert statusMessage={props.statusMessage} />
+      <CoreTab
+        form={props.form}
+        showLocalKey={props.showLocalKey}
+        onToggleLocalKey={props.onToggleLocalKey}
+        onFormChange={props.onFormChange}
+        proxyService={proxyService}
+      />
+      <StrategyTab strategy={props.form.upstreamStrategy} onChange={props.onStrategyChange} />
+      <UpstreamsTab
+        upstreams={props.form.upstreams}
+        showApiKeys={props.showUpstreamKeys}
+        providerOptions={props.providerOptions}
+        onToggleApiKeys={props.onToggleUpstreamKeys}
+        onAdd={props.onAddUpstream}
+        onRemove={props.onRemoveUpstream}
+        onChange={props.onChangeUpstream}
+      />
+      <FileTab
+        configPath={props.configPath}
+        savedAt={props.savedAt}
+        isDirty={props.isDirty}
+        onReset={props.onReset}
+      />
+      <ValidationTab form={props.form} validation={props.validation} />
+    </div>
+  );
+}
+
+type ConfigContentProps = AppViewProps & {
+  isDashboard: boolean;
+  sidebarOpen: boolean;
+  onToggleSidebar: () => void;
+  proxyService: ProxyServiceViewProps;
+};
+
+function ConfigContent({
+  isDashboard,
+  sidebarOpen,
+  onToggleSidebar,
+  proxyService,
+  ...props
+}: ConfigContentProps) {
+  return (
+    <ScrollArea data-slot="config-main-scroll" className="min-h-0 flex-1">
+      {isDashboard ? (
+        <DashboardTab sidebarOpen={sidebarOpen} onToggleSidebar={onToggleSidebar} />
+      ) : (
+        <ConfigTabs proxyService={proxyService} {...props} />
+      )}
+    </ScrollArea>
+  );
+}
+
+function toProxyServiceViewProps(props: AppViewProps) {
+  return {
+    status: props.proxyServiceStatus,
+    requestState: props.proxyServiceRequestState,
+    message: props.proxyServiceMessage,
+    isDirty: props.isDirty,
+    onRefresh: props.onProxyServiceRefresh,
+    onStart: props.onProxyServiceStart,
+    onStop: props.onProxyServiceStop,
+    onRestart: props.onProxyServiceRestart,
+    onReload: props.onProxyServiceReload,
+  };
+}
+
 export function AppView(props: AppViewProps) {
   const [activeSection, setActiveSection] = useState<ConfigSectionId>("core");
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const sectionMeta = useMemo(() => findSection(activeSection), [activeSection]);
   const isDashboard = activeSection === "dashboard";
   const toggleSidebar = () => setSidebarOpen((value) => !value);
+  const proxyService = toProxyServiceViewProps(props);
 
   return (
     <Tabs
@@ -348,69 +546,13 @@ export function AppView(props: AppViewProps) {
             onSave={props.onSave}
           />
         )}
-        <ScrollArea data-slot="config-main-scroll" className="min-h-0 flex-1">
-          {isDashboard ? (
-            <TabsContent value="dashboard" className="mt-0">
-              <DashboardScreen
-                variant="embedded"
-                headerLeading={<SidebarToggleButton open={sidebarOpen} onToggle={toggleSidebar} />}
-              />
-            </TabsContent>
-          ) : (
-            <div className="p-6">
-              <StatusAlert statusMessage={props.statusMessage} />
-              <TabsContent value="core" className="mt-0">
-                <ProxyCoreCard
-                  form={props.form}
-                  showLocalKey={props.showLocalKey}
-                  onToggleLocalKey={props.onToggleLocalKey}
-                  onChange={props.onFormChange}
-                />
-              </TabsContent>
-              <TabsContent value="strategy" className="mt-0">
-                <StrategyCard
-                  strategy={props.form.upstreamStrategy}
-                  onChange={props.onStrategyChange}
-                />
-              </TabsContent>
-              <TabsContent value="upstreams" className="mt-0">
-                <UpstreamsCard
-                  upstreams={props.form.upstreams}
-                  showApiKeys={props.showUpstreamKeys}
-                  providerOptions={props.providerOptions}
-                  onToggleApiKeys={props.onToggleUpstreamKeys}
-                  onAdd={props.onAddUpstream}
-                  onRemove={props.onRemoveUpstream}
-                  onChange={props.onChangeUpstream}
-                />
-              </TabsContent>
-              <TabsContent value="file" className="mt-0">
-                <div className="space-y-6">
-                  <ConfigFileCard
-                    configPath={props.configPath}
-                    savedAt={props.savedAt}
-                    isDirty={props.isDirty}
-                    onReset={props.onReset}
-                  />
-                  <ProxyServiceCard
-                    status={props.proxyServiceStatus}
-                    requestState={props.proxyServiceRequestState}
-                    message={props.proxyServiceMessage}
-                    isDirty={props.isDirty}
-                    onRefresh={props.onProxyServiceRefresh}
-                    onStart={props.onProxyServiceStart}
-                    onStop={props.onProxyServiceStop}
-                    onRestart={props.onProxyServiceRestart}
-                    onReload={props.onProxyServiceReload}
-                  />
-                </div>
-              </TabsContent>
-              <TabsContent value="validation" className="mt-0">
-                <ValidationCard form={props.form} validation={props.validation} />
-              </TabsContent>
-            </div>
-          )}
-        </ScrollArea>
+        <ConfigContent
+          {...props}
+          isDashboard={isDashboard}
+          sidebarOpen={sidebarOpen}
+          onToggleSidebar={toggleSidebar}
+          proxyService={proxyService}
+        />
       </section>
     </Tabs>
   );

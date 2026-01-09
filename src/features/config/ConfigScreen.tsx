@@ -9,6 +9,7 @@ import type {
   ConfigForm,
   ConfigResponse,
   ProxyConfigFile,
+  ProxyServiceRequestState,
   ProxyServiceStatus,
 } from "@/features/config/types";
 import { parseError } from "@/lib/error";
@@ -16,7 +17,6 @@ import { useI18n } from "@/lib/i18n";
 import { m } from "@/paraglide/messages.js";
 
 type StatusState = "idle" | "loading" | "saving" | "saved" | "error";
-type ProxyServiceRequestState = "idle" | "working" | "error";
 
 function createStatusBadge(
   status: StatusState,

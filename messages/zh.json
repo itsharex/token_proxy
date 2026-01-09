@@ -28,7 +28,7 @@
 
   "config_section_dashboard_label": "仪表盘",
   "config_section_dashboard_desc": "请求与 Token 使用",
-  "config_section_core_label": "代理核心",
+  "config_section_core_label": "Core",
   "config_section_core_desc": "监听地址、鉴权与日志",
   "config_section_strategy_label": "策略",
   "config_section_strategy_desc": "全局上游选择规则",
@@ -39,7 +39,7 @@
   "config_section_validation_label": "校验",
   "config_section_validation_desc": "快速检查",
 
-  "proxy_core_title": "代理核心",
+  "proxy_core_title": "Core",
   "proxy_core_desc": "监听地址、访问控制与日志输出。",
   "proxy_core_host_label": "Host",
   "proxy_core_port_label": "端口",

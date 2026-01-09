@@ -28,7 +28,7 @@
 
   "config_section_dashboard_label": "Dashboard",
   "config_section_dashboard_desc": "Requests and token usage",
-  "config_section_core_label": "Proxy Core",
+  "config_section_core_label": "Core",
   "config_section_core_desc": "Listening address, auth, and logs",
   "config_section_strategy_label": "Strategy",
   "config_section_strategy_desc": "Global upstream selection rules",
@@ -39,7 +39,7 @@
   "config_section_validation_label": "Validation",
   "config_section_validation_desc": "Quick readiness checks",
 
-  "proxy_core_title": "Proxy Core",
+  "proxy_core_title": "Core",
   "proxy_core_desc": "Listening address, access control, and log output.",
   "proxy_core_host_label": "Host",
   "proxy_core_port_label": "Port",

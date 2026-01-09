@@ -3,5 +3,4 @@ export { ProxyCoreCard } from "./proxy-core-card";
 export { StrategyCard } from "./strategy-card";
 export { UpstreamsCard } from "./upstreams-card";
 export { ConfigFileCard } from "./config-file-card";
-export { ProxyServiceCard } from "./proxy-service-card";
 export { ValidationCard } from "./validation-card";
