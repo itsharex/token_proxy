@@ -4,6 +4,7 @@ mod tray;
 
 use std::time::Instant;
 use tauri::Manager;
+#[cfg(debug_assertions)]
 use tracing_subscriber::{fmt, EnvFilter};
 
 type ProxyServiceHandle = proxy::service::ProxyServiceHandle;
@@ -151,16 +152,20 @@ async fn proxy_reload(
 
 /// 初始化 tracing 日志系统
 fn init_tracing() {
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("token_proxy_lib=debug,tower_http=debug"));
+    // release 不初始化 tracing，避免任何运行时日志输出。
+    #[cfg(debug_assertions)]
+    {
+        let filter = EnvFilter::try_from_default_env()
+            .unwrap_or_else(|_| EnvFilter::new("token_proxy_lib=debug,tower_http=debug"));
 
-    fmt()
-        .with_env_filter(filter)
-        .with_target(true)
-        .with_thread_ids(false)
-        .with_file(true)
-        .with_line_number(true)
-        .init();
+        fmt()
+            .with_env_filter(filter)
+            .with_target(true)
+            .with_thread_ids(false)
+            .with_file(true)
+            .with_line_number(true)
+            .init();
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

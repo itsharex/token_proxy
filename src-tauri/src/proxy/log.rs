@@ -7,6 +7,18 @@ use std::{
 };
 use tokio::{io::AsyncWriteExt, sync::Mutex};
 
+#[cfg(debug_assertions)]
+macro_rules! debug_log_error {
+    ($($arg:tt)*) => {
+        eprintln!($($arg)*);
+    };
+}
+
+#[cfg(not(debug_assertions))]
+macro_rules! debug_log_error {
+    ($($arg:tt)*) => {};
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 pub(crate) struct TokenUsage {
     pub(crate) input_tokens: Option<u64>,
@@ -80,9 +92,9 @@ impl LogWriter {
         {
             let mut file = self.file.lock().await;
             if let Err(err) = file.write_all(line.as_bytes()).await {
-                eprintln!("proxy log write failed: {err}");
+                debug_log_error!("proxy log write failed: {err}");
             } else if let Err(err) = file.write_all(b"\n").await {
-                eprintln!("proxy log write failed: {err}");
+                debug_log_error!("proxy log write failed: {err}");
             }
         }
 
@@ -90,7 +102,7 @@ impl LogWriter {
             return;
         };
         if let Err(err) = insert_log_entry(pool, entry).await {
-            eprintln!("proxy sqlite write failed: {err}");
+            debug_log_error!("proxy sqlite write failed: {err}");
         }
     }
 }
