@@ -10,7 +10,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Separator } from "@/components/ui/separator";
 import { ProxyServicePanel, type ProxyServiceViewProps } from "@/features/config/cards/proxy-service-card";
 import {
   type ConfigForm,
@@ -184,7 +183,6 @@ type ProxyCoreServiceSectionProps = {
 function ProxyCoreServiceSection({ proxyService }: ProxyCoreServiceSectionProps) {
   return (
     <div className="space-y-4">
-      <Separator className="my-1" />
       <div className="rounded-lg border border-border/60 bg-background/60 p-4">
         <ProxyServicePanel {...proxyService} />
       </div>

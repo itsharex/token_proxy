@@ -2,7 +2,6 @@ import { Loader2, Play, RefreshCw, RotateCcw, Square } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Separator } from "@/components/ui/separator";
 import type { ProxyServiceRequestState, ProxyServiceStatus } from "@/features/config/types";
 import { cn } from "@/lib/utils";
 import { m } from "@/paraglide/messages.js";
@@ -160,7 +159,6 @@ function ProxyServiceContent({
   return (
     <div className={cn("space-y-4", className)}>
       <ProxyServiceStatusRow badge={badge} addr={addr} />
-      <Separator />
       <ProxyServiceHelp />
       <ProxyServiceError message={errorMessage} />
       <ProxyServiceActions
