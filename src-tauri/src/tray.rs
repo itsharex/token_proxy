@@ -259,10 +259,10 @@ fn start_token_rate_loop(tray_state: TrayState) {
 
 fn format_rate_title(snapshot: TokenRateSnapshot, format: TrayTokenRateFormat) -> String {
     match format {
-        TrayTokenRateFormat::Combined => format!("t/s {}", snapshot.total),
-        TrayTokenRateFormat::Split => format!("↑{} ↓{} t/s", snapshot.input, snapshot.output),
+        TrayTokenRateFormat::Combined => format!("{}", snapshot.total),
+        TrayTokenRateFormat::Split => format!("↑{} ↓{}", snapshot.input, snapshot.output),
         TrayTokenRateFormat::Both => {
-            format!("{} t/s | ↑{} ↓{}", snapshot.total, snapshot.input, snapshot.output)
+            format!("{} | ↑{} ↓{}", snapshot.total, snapshot.input, snapshot.output)
         }
     }
 }
