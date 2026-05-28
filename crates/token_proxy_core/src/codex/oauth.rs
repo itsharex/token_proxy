@@ -43,13 +43,24 @@ impl CodexRefreshTokenClient {
 #[derive(Clone)]
 pub(crate) struct CodexOAuthClient {
     http: Client,
+    token_url: String,
 }
 
 impl CodexOAuthClient {
     pub(crate) fn new(proxy_url: Option<&str>) -> Result<Self, String> {
+        Self::new_with_token_url(proxy_url, OPENAI_TOKEN_URL)
+    }
+
+    pub(crate) fn new_with_token_url(
+        proxy_url: Option<&str>,
+        token_url: &str,
+    ) -> Result<Self, String> {
         let http = build_reqwest_client(proxy_url, std::time::Duration::from_secs(30))
             .map_err(|err| format!("Failed to build Codex OAuth client: {err}"))?;
-        Ok(Self { http })
+        Ok(Self {
+            http,
+            token_url: token_url.to_string(),
+        })
     }
 
     pub(crate) fn build_authorize_url(
@@ -136,7 +147,7 @@ impl CodexOAuthClient {
 
         let response = self
             .http
-            .post(OPENAI_TOKEN_URL)
+            .post(&self.token_url)
             .header("Content-Type", "application/x-www-form-urlencoded")
             .header("Accept", "application/json")
             .body(body)
