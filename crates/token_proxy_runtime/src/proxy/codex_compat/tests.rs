@@ -60,6 +60,27 @@ fn chat_request_to_codex_forces_upstream_streaming() {
 }
 
 #[test]
+fn chat_request_to_codex_defaults_nested_function_strict_to_false() {
+    let input = json!({
+        "model": "gpt-5.5",
+        "messages": [{ "role": "user", "content": "hi" }],
+        "tools": [{
+            "type": "function",
+            "function": {
+                "name": "lookup",
+                "parameters": { "type": "object" }
+            }
+        }]
+    });
+
+    let output =
+        chat_request_to_codex(&Bytes::from(input.to_string()), None).expect("convert chat request");
+    let value: Value = serde_json::from_slice(&output).expect("json");
+
+    assert_eq!(value["tools"][0]["strict"], json!(false));
+}
+
+#[test]
 fn chat_request_to_codex_accepts_responses_shaped_body() {
     let input = json!({
         "model": "openai/gpt 5.5",
@@ -210,6 +231,58 @@ fn responses_request_to_codex_preserves_gpt_5_6_models() {
 }
 
 #[test]
+fn codex_requests_normalize_gpt_6_astra_aliases_and_effort() {
+    let response_input = json!({
+        "model": "OPENAI/GPT-6_ASTRA_MAX",
+        "input": "hi"
+    });
+    let response_output =
+        responses_request_to_codex(&Bytes::from(response_input.to_string()), None)
+            .expect("convert responses request");
+    let response_value: Value = serde_json::from_slice(&response_output).expect("json");
+
+    assert_eq!(response_value["model"], "gpt-6-astra");
+    assert_eq!(response_value["reasoning"]["effort"], "max");
+    assert_eq!(
+        response_value["instructions"],
+        "You are Codex, an agent based on GPT-6."
+    );
+
+    let chat_input = json!({
+        "model": "gpt-6-max",
+        "messages": [{ "role": "user", "content": "hi" }]
+    });
+    let chat_output = chat_request_to_codex(&Bytes::from(chat_input.to_string()), None)
+        .expect("convert chat request");
+    let chat_value: Value = serde_json::from_slice(&chat_output).expect("json");
+
+    assert_eq!(chat_value["model"], "gpt-6-astra");
+    assert_eq!(chat_value["reasoning"]["effort"], "max");
+    assert_eq!(
+        chat_value["instructions"],
+        "You are Codex, an agent based on GPT-6."
+    );
+}
+
+#[test]
+fn responses_request_to_codex_normalizes_dated_gpt_6_astra_variant() {
+    let input = json!({
+        "model": "OPENAI/GPT-6_ASTRA_2026-09-01",
+        "input": "hi"
+    });
+
+    let output = responses_request_to_codex(&Bytes::from(input.to_string()), None)
+        .expect("convert responses request");
+    let value: Value = serde_json::from_slice(&output).expect("json");
+
+    assert_eq!(value["model"], "gpt-6-astra");
+    assert_eq!(
+        value["instructions"],
+        "You are Codex, an agent based on GPT-6."
+    );
+}
+
+#[test]
 fn supported_codex_models_include_current_codex_families() {
     let models = supported_codex_model_ids();
 
@@ -223,6 +296,10 @@ fn supported_codex_models_include_current_codex_families() {
     assert!(models.contains(&"gpt-5.6-luna-xhigh".to_string()));
     assert!(models.contains(&"gpt-5.5-pro".to_string()));
     assert!(models.contains(&"gpt-5.5-pro-high".to_string()));
+    assert!(models.contains(&"gpt-6".to_string()));
+    assert!(models.contains(&"gpt-6-max".to_string()));
+    assert!(models.contains(&"gpt-6-astra".to_string()));
+    assert!(models.contains(&"gpt-6-astra-max".to_string()));
 }
 
 #[test]
@@ -272,6 +349,8 @@ fn responses_request_to_codex_uses_model_aware_default_instructions() {
             "gpt-5-codex",
             "You are Codex, based on GPT-5. You are running as a coding agent in the Codex CLI on a user's computer.",
         ),
+        ("gpt-6", "You are Codex, an agent based on GPT-6."),
+        ("gpt-6-astra-high", "You are Codex, an agent based on GPT-6."),
     ] {
         let input = json!({
             "model": model,
@@ -284,6 +363,40 @@ fn responses_request_to_codex_uses_model_aware_default_instructions() {
 
         assert_eq!(value["instructions"], expected, "model={model}");
     }
+}
+
+#[test]
+fn responses_request_to_codex_supports_allowed_tools_and_chat_strict_default() {
+    let input = json!({
+        "model": "gpt-6",
+        "input": "hi",
+        "tools": [{
+            "type": "function",
+            "function": {
+                "name": "a_very_long_function_name_that_must_be_shortened_for_codex_clients_123456789",
+                "parameters": {"type": "object"}
+            }
+        }],
+        "tool_choice": {
+            "type": "allowed_tools",
+            "tools": [{
+                "type": "function",
+                "name": "a_very_long_function_name_that_must_be_shortened_for_codex_clients_123456789"
+            }]
+        }
+    });
+
+    let output = responses_request_to_codex(&Bytes::from(input.to_string()), None)
+        .expect("convert responses request");
+    let value: serde_json::Value = serde_json::from_slice(&output).expect("json");
+    let mapped_name = value["tools"][0]["name"].as_str().expect("mapped name");
+
+    assert_eq!(value["tools"][0]["strict"], json!(false));
+    assert_eq!(value["tool_choice"]["tools"][0]["name"], mapped_name);
+    assert_eq!(
+        value["instructions"],
+        "You are Codex, an agent based on GPT-6."
+    );
 }
 
 #[test]
@@ -1033,12 +1146,43 @@ fn responses_request_to_codex_uses_top_level_tool_name() {
     assert_eq!(tools[0]["name"], "demo_tool");
     assert_eq!(tools[0]["description"], "noop");
     assert!(tools[0]["parameters"].is_object());
+    assert!(tools[0].get("strict").is_none());
     assert_eq!(
         value["tool_choice"]
             .get("name")
             .and_then(serde_json::Value::as_str),
         Some("demo_tool")
     );
+}
+
+#[test]
+fn responses_request_to_codex_maps_additional_tool_names_without_changing_shape() {
+    let original = "an_additional_tool_name_that_needs_the_same_codex_shortening_behavior_12345";
+    let input = json!({
+        "model": "gpt-5.5",
+        "input": [
+            {
+                "type": "additional_tools",
+                "tools": [{
+                    "type": "function",
+                    "function": {
+                        "name": original,
+                        "parameters": { "type": "object" }
+                    }
+                }]
+            },
+            { "type": "message", "role": "user", "content": "hi" }
+        ]
+    });
+
+    let output = responses_request_to_codex(&Bytes::from(input.to_string()), None)
+        .expect("convert responses request");
+    let value: Value = serde_json::from_slice(&output).expect("json");
+    let tool = &value["input"][0]["tools"][0];
+
+    assert_eq!(tool["type"], "function");
+    assert_eq!(tool["function"]["parameters"]["type"], "object");
+    assert_eq!(tool["function"]["name"], shorten_name_if_needed(original),);
 }
 
 #[test]

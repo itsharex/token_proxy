@@ -1711,6 +1711,41 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn native_responses_prelude_retries_empty_incomplete_before_output() {
+        let upstream_res = reqwest_response_from_delayed_chunks(vec![(
+            Duration::ZERO,
+            "data: {\"type\":\"response.incomplete\",\"response\":{\"output\":[],\"usage\":{\"output_tokens\":0}}}\n\n",
+        )]);
+        let mut context = test_context();
+        context.provider = PROVIDER_OPENAI_RESPONSES.to_string();
+        let log = Arc::new(LogWriter::new(None));
+
+        let response = match prepare_upstream_stream(
+            StatusCode::OK,
+            &HeaderMap::new(),
+            upstream_res,
+            FormatTransform::None,
+            &mut context,
+            &log,
+            Duration::from_secs(1),
+            Duration::from_secs(1),
+            Duration::from_secs(30),
+        )
+        .await
+        {
+            Ok(_) => panic!("empty incomplete should trigger failover"),
+            Err(response) => response,
+        };
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let retry = response
+            .extensions()
+            .get::<RetryableStreamResponse>()
+            .expect("retry marker");
+        assert_eq!(retry.status, StatusCode::BAD_GATEWAY);
+    }
+
+    #[tokio::test]
     async fn xai_responses_prelude_exposes_unauthorized_semantic_status() {
         let upstream_res = reqwest_response_from_delayed_chunks(vec![(
             Duration::ZERO,

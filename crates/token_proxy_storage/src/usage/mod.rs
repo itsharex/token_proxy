@@ -66,6 +66,8 @@ fn contains_usage_fields(value: &Value) -> bool {
         "total_tokens",
         "cache_read_input_tokens",
         "cache_creation_input_tokens",
+        "cache_write_tokens",
+        "cached_creation_tokens",
     ]
     .iter()
     .any(|field| value.get(*field).is_some())
@@ -127,6 +129,30 @@ fn snapshot_from_usage_value(value: &Value) -> UsageSnapshot {
     let aggregate_cache_write = value
         .get("cache_creation_input_tokens")
         .and_then(Value::as_u64)
+        .or_else(|| {
+            value
+                .get("input_tokens_details")
+                .and_then(|details| details.get("cache_write_tokens"))
+                .and_then(Value::as_u64)
+        })
+        .or_else(|| {
+            value
+                .get("prompt_tokens_details")
+                .and_then(|details| details.get("cache_write_tokens"))
+                .and_then(Value::as_u64)
+        })
+        .or_else(|| {
+            value
+                .get("input_tokens_details")
+                .and_then(|details| details.get("cached_creation_tokens"))
+                .and_then(Value::as_u64)
+        })
+        .or_else(|| {
+            value
+                .get("prompt_tokens_details")
+                .and_then(|details| details.get("cached_creation_tokens"))
+                .and_then(Value::as_u64)
+        })
         .unwrap_or(0);
     let cache_creation = value.get("cache_creation");
     let cache_write_5m_tokens = cache_creation
@@ -176,7 +202,23 @@ fn snapshot_from_usage_value(value: &Value) -> UsageSnapshot {
     let has_input = value.get("input_tokens").is_some()
         || value.get("prompt_tokens").is_some()
         || value.get("cache_read_input_tokens").is_some()
-        || value.get("cache_creation_input_tokens").is_some();
+        || value.get("cache_creation_input_tokens").is_some()
+        || value
+            .get("input_tokens_details")
+            .and_then(|details| details.get("cache_write_tokens"))
+            .is_some()
+        || value
+            .get("input_tokens_details")
+            .and_then(|details| details.get("cached_creation_tokens"))
+            .is_some()
+        || value
+            .get("prompt_tokens_details")
+            .and_then(|details| details.get("cache_write_tokens"))
+            .is_some()
+        || value
+            .get("prompt_tokens_details")
+            .and_then(|details| details.get("cached_creation_tokens"))
+            .is_some();
     let has_output =
         value.get("output_tokens").is_some() || value.get("completion_tokens").is_some();
     let has_usage = has_input || has_output || value.get("total_tokens").is_some();

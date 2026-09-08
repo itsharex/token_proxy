@@ -18,6 +18,7 @@ const GPT5_1_DEFAULT_INSTRUCTIONS: &str =
     "You are GPT-5.1 running in the Codex CLI, a terminal-based coding assistant.";
 const GPT5_2_DEFAULT_INSTRUCTIONS: &str =
     "You are GPT-5.2 running in the Codex CLI, a terminal-based coding assistant.";
+const GPT6_ASTRA_DEFAULT_INSTRUCTIONS: &str = "You are Codex, an agent based on GPT-6.";
 const CODEX_CALL_ID_MAX_BYTES: usize = 64;
 const CODEX_CALL_ID_PREFIX: &str = "fc_";
 const CODEX_INPUT_ITEM_ID_MAX_CHARS: usize = 64;
@@ -210,6 +211,7 @@ fn transform_responses_request_to_codex(
     }
     normalize_tool_choice_for_codex(&mut object);
     if let Some(input) = object.get_mut("input") {
+        map_additional_tools(input, &tool_map);
         normalize_input_message_text(input);
         add_missing_tool_call_names(input);
         rewrite_input_function_names(input, &tool_map);
@@ -262,12 +264,20 @@ fn parse_effort_suffix(model: &str) -> Option<String> {
         return (!effort.is_empty()).then_some(effort);
     }
 
-    parse_gpt_5_6_effort_suffix(model)
+    parse_codex_effort_suffix(model)
 }
 
-fn parse_gpt_5_6_effort_suffix(model: &str) -> Option<String> {
-    let model = model.trim().rsplit('/').next()?.trim().to_ascii_lowercase();
+fn parse_codex_effort_suffix(model: &str) -> Option<String> {
+    let model = model
+        .trim()
+        .rsplit('/')
+        .next()?
+        .trim()
+        .to_ascii_lowercase()
+        .replace('_', "-");
     for prefix in [
+        "gpt-6-astra-",
+        "gpt-6-",
         "gpt-5.6-sol-",
         "gpt-5.6-terra-",
         "gpt-5.6-luna-",
@@ -287,34 +297,51 @@ fn parse_gpt_5_6_effort_suffix(model: &str) -> Option<String> {
 }
 
 fn build_tool_name_map(object: &Map<String, Value>) -> ToolNameMap {
-    let names = object
+    let mut names = object
         .get("tools")
         .map(collect_function_tool_names)
         .unwrap_or_default();
+    if let Some(input) = object.get("input").and_then(Value::as_array) {
+        for item in input {
+            if item.get("type").and_then(Value::as_str) == Some("additional_tools") {
+                names.extend(
+                    item.get("tools")
+                        .map(collect_function_tool_names)
+                        .unwrap_or_default(),
+                );
+            }
+        }
+    }
     ToolNameMap::from_names(&names)
 }
 
 fn collect_function_tool_names(value: &Value) -> Vec<String> {
     let mut names = Vec::new();
+    collect_function_tool_names_into(value, &mut names);
+    names
+}
+
+fn collect_function_tool_names_into(value: &Value, names: &mut Vec<String>) {
     let Some(items) = value.as_array() else {
-        return names;
+        return;
     };
     for tool in items {
-        if tool.get("type").and_then(Value::as_str) != Some("function") {
-            continue;
-        }
-        let name = tool
-            .get("function")
-            .and_then(|value| value.get("name"))
-            .and_then(Value::as_str)
-            .or_else(|| tool.get("name").and_then(Value::as_str));
-        if let Some(name) = name {
-            if !name.is_empty() {
-                names.push(name.to_string());
+        if tool.get("type").and_then(Value::as_str) == Some("function") {
+            let name = tool
+                .get("function")
+                .and_then(|value| value.get("name"))
+                .and_then(Value::as_str)
+                .or_else(|| tool.get("name").and_then(Value::as_str));
+            if let Some(name) = name {
+                if !name.is_empty() {
+                    names.push(name.to_string());
+                }
             }
         }
+        if let Some(nested) = tool.get("tools") {
+            collect_function_tool_names_into(nested, names);
+        }
     }
-    names
 }
 
 fn map_chat_messages_to_input(messages: &[Value], tool_map: &ToolNameMap) -> Vec<Value> {
@@ -572,10 +599,56 @@ fn map_tools(tools: &Value, tool_map: &ToolNameMap) -> Value {
         }
         if let Some(strict) = function.get("strict").or_else(|| tool.get("strict")) {
             item.insert("strict".to_string(), strict.clone());
+        } else if tool.get("function").is_some() {
+            item.insert("strict".to_string(), Value::Bool(false));
         }
         output.push(Value::Object(item));
     }
     Value::Array(output)
+}
+
+fn map_additional_tools(input: &mut Value, tool_map: &ToolNameMap) {
+    let Some(items) = input.as_array_mut() else {
+        return;
+    };
+    for item in items {
+        if item.get("type").and_then(Value::as_str) != Some("additional_tools") {
+            continue;
+        }
+        if let Some(tools) = item.get_mut("tools") {
+            // Additional tool declarations are already Responses-native input history.
+            map_additional_tool_names(tools, tool_map);
+        }
+    }
+}
+
+fn map_additional_tool_names(tools: &mut Value, tool_map: &ToolNameMap) {
+    let Some(items) = tools.as_array_mut() else {
+        return;
+    };
+    for item in items {
+        if item.get("type").and_then(Value::as_str) == Some("function") {
+            if let Some(function) = item.get_mut("function") {
+                if let Some(name) = function
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+                {
+                    function
+                        .as_object_mut()
+                        .expect("function tool is object")
+                        .insert("name".to_string(), Value::String(tool_map.shorten(&name)));
+                }
+            } else if let Some(name) = item.get("name").and_then(Value::as_str).map(str::to_owned) {
+                item.as_object_mut()
+                    .expect("function tool is object")
+                    .insert("name".to_string(), Value::String(tool_map.shorten(&name)));
+            }
+        }
+        if let Some(nested) = item.get_mut("tools") {
+            map_additional_tool_names(nested, tool_map);
+        }
+    }
 }
 
 // Codex rejects explicit null schema types. Missing types remain valid and must stay absent.
@@ -652,6 +725,22 @@ fn map_tool_choice(choice: &Value, tool_map: &ToolNameMap) -> Value {
     let Some(choice_type) = object.get("type").and_then(Value::as_str) else {
         return choice.clone();
     };
+    if choice_type == "allowed_tools" {
+        let mut output = object.clone();
+        if let Some(Value::Array(items)) = output.get_mut("tools") {
+            for item in items {
+                if item.get("type").and_then(Value::as_str) == Some("function") {
+                    if let Some(name) = item.get("name").and_then(Value::as_str).map(str::to_owned)
+                    {
+                        item.as_object_mut()
+                            .expect("allowed tool is object")
+                            .insert("name".to_string(), Value::String(tool_map.shorten(&name)));
+                    }
+                }
+            }
+        }
+        return Value::Object(output);
+    }
     if choice_type != "function" {
         return choice.clone();
     }
@@ -680,7 +769,10 @@ fn normalize_tool_choice_for_codex(object: &mut Map<String, Value>) {
         return;
     };
     let choice_type = choice_type.trim();
-    if choice_type.is_empty() || codex_tools_contain_type(object.get("tools"), choice_type) {
+    if choice_type.is_empty()
+        || choice_type == "allowed_tools"
+        || codex_tools_contain_type(object.get("tools"), choice_type)
+    {
         return;
     }
     object.insert("tool_choice".to_string(), Value::String("auto".to_string()));
@@ -752,10 +844,10 @@ fn normalize_responses_payload(
         .filter(|_| model_hint.is_none())
         .or(model_hint)
         .unwrap_or_default();
-    let inferred_effort = parse_gpt_5_6_effort_suffix(requested_model);
+    let inferred_effort = parse_codex_effort_suffix(requested_model);
     let model = normalize_codex_model(requested_model);
     object.insert("model".to_string(), Value::String(model.clone()));
-    normalize_gpt_5_6_reasoning_effort(object, &model, inferred_effort.as_deref());
+    normalize_codex_reasoning_effort(object, &model, inferred_effort.as_deref());
     if !object.contains_key("parallel_tool_calls") {
         object.insert("parallel_tool_calls".to_string(), Value::Bool(true));
     }
@@ -829,12 +921,15 @@ fn remove_prompt_cache_breakpoints(items: &mut [Value]) -> usize {
     removed
 }
 
-fn normalize_gpt_5_6_reasoning_effort(
+fn normalize_codex_reasoning_effort(
     object: &mut Map<String, Value>,
     model: &str,
     inferred_effort: Option<&str>,
 ) {
-    if !matches!(model, "gpt-5.6-sol" | "gpt-5.6-terra" | "gpt-5.6-luna") {
+    if !matches!(
+        model,
+        "gpt-6-astra" | "gpt-5.6-sol" | "gpt-5.6-terra" | "gpt-5.6-luna"
+    ) {
         return;
     }
 
@@ -870,7 +965,7 @@ fn normalize_gpt_5_6_reasoning_effort(
         model,
         requested_effort = effort.as_str(),
         normalized_effort,
-        "normalized GPT-5.6 reasoning effort"
+        "normalized Codex reasoning effort"
     );
 }
 
@@ -907,12 +1002,16 @@ fn normalize_codex_model(model: &str) -> String {
     }
     let model_id = model.rsplit('/').next().unwrap_or(model).trim();
     let normalized = model_id.to_ascii_lowercase();
-    let compact = normalized.replace(' ', "-");
+    let compact = normalized.replace('_', "-").replace(' ', "-");
 
     for (alias, target) in CODEX_MODEL_ALIASES {
         if compact == *alias {
             return (*target).to_string();
         }
+    }
+
+    if compact == "gpt-6" || compact.starts_with("gpt-6-astra-") {
+        return "gpt-6-astra".to_string();
     }
 
     if compact.contains("gpt-5.6-sol") {
@@ -1068,6 +1167,20 @@ fn input_contains_additional_image_generation_tool(input: Option<&Value>) -> boo
 }
 
 const CODEX_MODEL_ALIASES: &[(&str, &str)] = &[
+    ("gpt-6", "gpt-6-astra"),
+    ("gpt-6-none", "gpt-6-astra"),
+    ("gpt-6-low", "gpt-6-astra"),
+    ("gpt-6-medium", "gpt-6-astra"),
+    ("gpt-6-high", "gpt-6-astra"),
+    ("gpt-6-xhigh", "gpt-6-astra"),
+    ("gpt-6-max", "gpt-6-astra"),
+    ("gpt-6-astra", "gpt-6-astra"),
+    ("gpt-6-astra-none", "gpt-6-astra"),
+    ("gpt-6-astra-low", "gpt-6-astra"),
+    ("gpt-6-astra-medium", "gpt-6-astra"),
+    ("gpt-6-astra-high", "gpt-6-astra"),
+    ("gpt-6-astra-xhigh", "gpt-6-astra"),
+    ("gpt-6-astra-max", "gpt-6-astra"),
     ("gpt-5.6", "gpt-5.6-sol"),
     ("gpt-5.6-none", "gpt-5.6-sol"),
     ("gpt-5.6-minimal", "gpt-5.6-sol"),
@@ -1215,6 +1328,9 @@ fn ensure_default_instructions(object: &mut Map<String, Value>, model: &str) {
 
 fn codex_base_instructions_for_model(model: &str) -> &'static str {
     let model = model.trim().to_ascii_lowercase();
+    if model.starts_with("gpt-6-astra") {
+        return GPT6_ASTRA_DEFAULT_INSTRUCTIONS;
+    }
     if model.contains("codex") {
         return CODEX_DEFAULT_INSTRUCTIONS;
     }

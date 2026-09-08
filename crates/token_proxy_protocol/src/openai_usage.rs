@@ -42,11 +42,21 @@ pub fn map_usage_responses_to_chat(usage: &Value) -> Option<Value> {
 fn map_responses_input_details_to_chat(details: &Map<String, Value>) -> Option<Value> {
     let mut mapped = Map::new();
     insert_nonzero_u64(&mut mapped, "cached_tokens", details.get("cached_tokens"));
-    insert_nonzero_u64(
-        &mut mapped,
-        "cached_creation_tokens",
-        details.get("cached_creation_tokens"),
-    );
+    let cache_write_tokens = details.get("cache_write_tokens").and_then(Value::as_u64);
+    let cached_creation_tokens = details
+        .get("cached_creation_tokens")
+        .and_then(Value::as_u64)
+        .filter(|tokens| *tokens > 0);
+    if let Some(tokens) = cache_write_tokens {
+        mapped.insert("cache_write_tokens".to_string(), json!(tokens));
+        mapped.insert(
+            "cached_creation_tokens".to_string(),
+            // Legacy clients read this name, so it mirrors the native field.
+            json!(tokens),
+        );
+    } else if let Some(tokens) = cached_creation_tokens {
+        mapped.insert("cached_creation_tokens".to_string(), json!(tokens));
+    }
     insert_nonzero_u64(&mut mapped, "audio_tokens", details.get("audio_tokens"));
     if mapped.contains_key("cached_creation_tokens") {
         tracing::debug!("preserved cache creation usage in Chat details");
@@ -115,4 +125,86 @@ pub fn map_usage_chat_to_responses(usage: &Value) -> Option<Value> {
     );
 
     Some(Value::Object(mapped))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{map_usage_chat_to_responses, map_usage_responses_to_chat};
+    use serde_json::json;
+
+    #[test]
+    fn responses_cache_write_maps_to_both_chat_cache_fields() {
+        let mapped = map_usage_responses_to_chat(&json!({
+            "input_tokens": 10,
+            "output_tokens": 2,
+            "input_tokens_details": { "cache_write_tokens": 3 }
+        }))
+        .expect("usage mapping");
+
+        assert_eq!(
+            mapped["prompt_tokens_details"]["cache_write_tokens"],
+            json!(3)
+        );
+        assert_eq!(
+            mapped["prompt_tokens_details"]["cached_creation_tokens"],
+            json!(3)
+        );
+    }
+
+    #[test]
+    fn cache_write_tokens_overrides_conflicting_legacy_cache_creation_tokens() {
+        let mapped = map_usage_responses_to_chat(&json!({
+            "input_tokens": 10,
+            "output_tokens": 2,
+            "input_tokens_details": {
+                "cache_write_tokens": 3,
+                "cached_creation_tokens": 9
+            }
+        }))
+        .expect("usage mapping");
+
+        assert_eq!(
+            mapped["prompt_tokens_details"]["cache_write_tokens"],
+            json!(3)
+        );
+        assert_eq!(
+            mapped["prompt_tokens_details"]["cached_creation_tokens"],
+            json!(3)
+        );
+    }
+
+    #[test]
+    fn zero_cache_write_tokens_overrides_conflicting_legacy_cache_creation_tokens() {
+        let mapped = map_usage_responses_to_chat(&json!({
+            "input_tokens": 10,
+            "output_tokens": 2,
+            "input_tokens_details": {
+                "cache_write_tokens": 0,
+                "cached_creation_tokens": 9
+            }
+        }))
+        .expect("usage mapping");
+
+        assert_eq!(
+            mapped["prompt_tokens_details"]["cache_write_tokens"],
+            json!(0)
+        );
+        assert_eq!(
+            mapped["prompt_tokens_details"]["cached_creation_tokens"],
+            json!(0)
+        );
+    }
+
+    #[test]
+    fn chat_usage_mapping_keeps_existing_shape() {
+        let mapped = map_usage_chat_to_responses(&json!({
+            "prompt_tokens": 4,
+            "completion_tokens": 1,
+            "total_tokens": 5
+        }))
+        .expect("usage mapping");
+
+        assert_eq!(mapped["input_tokens"], json!(4));
+        assert_eq!(mapped["output_tokens"], json!(1));
+    }
 }

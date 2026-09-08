@@ -35,6 +35,41 @@ fn extracts_openai_cache_and_image_components() {
 }
 
 #[test]
+fn extracts_responses_cache_write_details_without_double_counting() {
+    let bytes = Bytes::from_static(
+        br#"{"usage":{"input_tokens":20,"output_tokens":7,"total_tokens":27,"input_tokens_details":{"cached_tokens":4,"cache_write_tokens":3}}}"#,
+    );
+    let snapshot = extract_usage_from_response(&bytes);
+
+    assert_eq!(snapshot.billable_usage.uncached_input_tokens, 13);
+    assert_eq!(snapshot.billable_usage.cache_read_tokens, 4);
+    assert_eq!(snapshot.billable_usage.cache_write_tokens, 3);
+    assert_eq!(snapshot.billable_usage.total_input_tokens(), 20);
+}
+
+#[test]
+fn cache_write_tokens_take_priority_over_legacy_cached_creation_tokens() {
+    let bytes = Bytes::from_static(
+        br#"{"usage":{"input_tokens":20,"output_tokens":7,"input_tokens_details":{"cache_write_tokens":3,"cached_creation_tokens":9}}}"#,
+    );
+    let snapshot = extract_usage_from_response(&bytes);
+
+    assert_eq!(snapshot.billable_usage.cache_write_tokens, 3);
+    assert_eq!(snapshot.billable_usage.uncached_input_tokens, 17);
+}
+
+#[test]
+fn extracts_legacy_cached_creation_details_as_cache_write() {
+    let bytes = Bytes::from_static(
+        br#"{"usage":{"input_tokens":8,"output_tokens":1,"input_tokens_details":{"cached_creation_tokens":2}}}"#,
+    );
+    let snapshot = extract_usage_from_response(&bytes);
+
+    assert_eq!(snapshot.billable_usage.cache_write_tokens, 2);
+    assert_eq!(snapshot.billable_usage.uncached_input_tokens, 6);
+}
+
+#[test]
 fn anthropic_cache_breakdown_does_not_double_count_aggregate_write() {
     let bytes = Bytes::from_static(
         br#"{"service_tier":"priority","usage":{"input_tokens":10,"output_tokens":2,"cache_read_input_tokens":4,"cache_creation_input_tokens":8,"cache_creation":{"ephemeral_5m_input_tokens":3,"ephemeral_1h_input_tokens":2}}}"#,

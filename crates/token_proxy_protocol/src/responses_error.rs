@@ -14,12 +14,14 @@ pub enum ResponsesPreludeDecision {
 
 pub struct ResponsesPreludeInspector {
     parser: SseEventParser,
+    saw_business_output: bool,
 }
 
 impl ResponsesPreludeInspector {
     pub fn new() -> Self {
         Self {
             parser: SseEventParser::new(),
+            saw_business_output: false,
         }
     }
 
@@ -27,8 +29,12 @@ impl ResponsesPreludeInspector {
         let mut events = Vec::new();
         self.parser.push_chunk(chunk, |data| events.push(data));
         for data in events {
-            match inspect_prelude_event(&data) {
+            match inspect_prelude_event(&data, self.saw_business_output) {
                 ResponsesPreludeDecision::Pending => {}
+                ResponsesPreludeDecision::ReadyForPassThrough => {
+                    self.saw_business_output |= has_business_output(&data);
+                    return ResponsesPreludeDecision::ReadyForPassThrough;
+                }
                 decision => return decision,
             }
         }
@@ -53,7 +59,7 @@ pub struct ResponsesStreamError {
     pub retryable_before_output: bool,
 }
 
-fn inspect_prelude_event(data: &str) -> ResponsesPreludeDecision {
+fn inspect_prelude_event(data: &str, saw_business_output: bool) -> ResponsesPreludeDecision {
     if data == "[DONE]" {
         return ResponsesPreludeDecision::ReadyForPassThrough;
     }
@@ -70,6 +76,20 @@ fn inspect_prelude_event(data: &str) -> ResponsesPreludeDecision {
             ResponsesPreludeDecision::ReadyForPassThrough
         };
     }
+    if value.get("type").and_then(Value::as_str) == Some("response.incomplete")
+        && !saw_business_output
+        && is_empty_incomplete_response(&value)
+    {
+        tracing::debug!(
+            event_type = "response.incomplete",
+            output_items = 0usize,
+            output_tokens = 0u64,
+            "retrying empty Responses incomplete prelude before business output"
+        );
+        return ResponsesPreludeDecision::RetryableError(protocol_error(
+            "OpenAI Responses upstream returned an empty incomplete response".to_string(),
+        ));
+    }
     match value.get("type").and_then(Value::as_str) {
         Some("response.created" | "response.in_progress") => ResponsesPreludeDecision::Pending,
         Some(_) => ResponsesPreludeDecision::ReadyForPassThrough,
@@ -77,6 +97,49 @@ fn inspect_prelude_event(data: &str) -> ResponsesPreludeDecision {
             "OpenAI Responses upstream emitted malformed stream event: {}",
             truncate_event_text(&value.to_string())
         ))),
+    }
+}
+
+fn is_empty_incomplete_response(value: &Value) -> bool {
+    let response = value.get("response").unwrap_or(value);
+    let output_empty = match response.get("output") {
+        None => true,
+        Some(Value::Array(items)) => items.is_empty(),
+        Some(_) => false,
+    };
+    let output_tokens_zero = response
+        .get("usage")
+        .and_then(|usage| usage.get("output_tokens"))
+        .and_then(Value::as_u64)
+        .is_some_and(|tokens| tokens == 0);
+    output_empty && output_tokens_zero
+}
+
+// Empty deltas are transport noise; only content or completed output items block failover.
+fn has_business_output(data: &str) -> bool {
+    let Ok(value) = serde_json::from_str::<Value>(data) else {
+        return false;
+    };
+    match value.get("type").and_then(Value::as_str) {
+        Some(
+            "response.output_item.added"
+            | "response.output_item.done"
+            | "response.content_part.added"
+            | "response.content_part.done"
+            | "response.function_call_arguments.done"
+            | "response.custom_tool_call_input.done",
+        ) => true,
+        Some(
+            "response.output_text.delta"
+            | "response.reasoning_text.delta"
+            | "response.reasoning_summary_text.delta"
+            | "response.function_call_arguments.delta"
+            | "response.custom_tool_call_input.delta",
+        ) => value
+            .get("delta")
+            .and_then(Value::as_str)
+            .is_some_and(|delta| !delta.trim().is_empty()),
+        _ => false,
     }
 }
 
@@ -588,5 +651,77 @@ mod tests {
             ),
             ResponsesPreludeDecision::ReadyForPassThrough
         );
+    }
+
+    #[test]
+    fn prelude_retries_empty_incomplete_without_output() {
+        let mut inspector = ResponsesPreludeInspector::new();
+        let decision = inspector.inspect_chunk(
+            br#"data: {"type":"response.incomplete","response":{"output":[],"usage":{"output_tokens":0}}}
+
+"#,
+        );
+        assert!(matches!(
+            decision,
+            ResponsesPreludeDecision::RetryableError(_)
+        ));
+    }
+
+    #[test]
+    fn prelude_passes_through_incomplete_with_output() {
+        let mut inspector = ResponsesPreludeInspector::new();
+        let decision = inspector.inspect_chunk(
+            br#"data: {"type":"response.incomplete","response":{"output":[{"type":"message"}],"usage":{"output_tokens":0}}}
+
+"#,
+        );
+        assert_eq!(decision, ResponsesPreludeDecision::ReadyForPassThrough);
+    }
+
+    #[test]
+    fn prelude_passes_through_incomplete_with_output_tokens() {
+        let mut inspector = ResponsesPreludeInspector::new();
+        let decision = inspector.inspect_chunk(
+            br#"data: {"type":"response.incomplete","response":{"output":[],"usage":{"output_tokens":1}}}
+
+"#,
+        );
+        assert_eq!(decision, ResponsesPreludeDecision::ReadyForPassThrough);
+    }
+
+    #[test]
+    fn prelude_retries_incomplete_after_empty_output_delta() {
+        let mut inspector = ResponsesPreludeInspector::new();
+        assert_eq!(
+            inspector.inspect_chunk(
+                br#"data: {"type":"response.output_text.delta","delta":""}
+
+"#
+            ),
+            ResponsesPreludeDecision::ReadyForPassThrough
+        );
+        let decision = inspector.inspect_chunk(
+            br#"data: {"type":"response.incomplete","response":{"output":[],"usage":{"output_tokens":0}}}
+
+"#,
+        );
+        assert!(matches!(
+            decision,
+            ResponsesPreludeDecision::RetryableError(_)
+        ));
+    }
+
+    #[test]
+    fn prelude_retries_incomplete_without_output_array() {
+        let mut inspector = ResponsesPreludeInspector::new();
+        let decision = inspector.inspect_chunk(
+            br#"data: {"type":"response.incomplete","response":{"usage":{"output_tokens":0}}}
+
+"#,
+        );
+        assert!(matches!(
+            decision,
+            ResponsesPreludeDecision::RetryableError(_)
+        ));
     }
 }
