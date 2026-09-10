@@ -231,6 +231,41 @@ fn local_auth_rejects_post_models_index_without_key() {
 }
 
 #[test]
+fn local_auth_allows_connectivity_hello_get_and_head_without_key() {
+    let config = config_with_local("local-key");
+    let headers = HeaderMap::new();
+    assert!(ensure_local_auth(&config, &headers, &Method::GET, "/api/hello", None).is_ok());
+    assert!(ensure_local_auth(&config, &headers, &Method::HEAD, "/api/hello", None).is_ok());
+}
+
+#[test]
+fn local_auth_rejects_connectivity_hello_post_without_key() {
+    let config = config_with_local("local-key");
+    let headers = HeaderMap::new();
+    let result = ensure_local_auth(&config, &headers, &Method::POST, "/api/hello", None);
+    assert_eq!(result, Err("Missing local access key.".to_string()));
+}
+
+#[test]
+fn connectivity_hello_response_is_ok_for_get_and_head() {
+    let get = connectivity_hello_response(&Method::GET);
+    assert_eq!(get.status(), StatusCode::OK);
+    assert_eq!(
+        get.headers()
+            .get(axum::http::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok()),
+        Some("application/json")
+    );
+
+    let head = connectivity_hello_response(&Method::HEAD);
+    assert_eq!(head.status(), StatusCode::OK);
+    assert!(head
+        .headers()
+        .get(axum::http::header::CONTENT_TYPE)
+        .is_none());
+}
+
+#[test]
 fn local_auth_allows_cors_preflight_without_key_when_enabled() {
     let config = config_with_local("local-key");
     let mut headers = HeaderMap::new();

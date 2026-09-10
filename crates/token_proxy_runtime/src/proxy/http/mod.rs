@@ -27,6 +27,8 @@ const X_ANTHROPIC_API_KEY: &str = "x-anthropic-api-key";
 const X_GOOG_API_KEY: &str = "x-goog-api-key";
 const OPENAI_MODELS_INDEX_PATH: &str = "/v1/models";
 const OPENAI_COMPATIBLE_MODELS_INDEX_PATH: &str = "/v1beta/openai/models";
+/// Claude Code 启动探活：`HEAD/GET {ANTHROPIC_BASE_URL}/api/hello`，官方 Anthropic 上无需 key。
+const CLAUDE_CONNECTIVITY_HELLO_PATH: &str = "/api/hello";
 const ORIGIN: HeaderName = HeaderName::from_static("origin");
 const VARY: HeaderName = HeaderName::from_static("vary");
 const ACCESS_CONTROL_REQUEST_METHOD: HeaderName =
@@ -66,6 +68,14 @@ pub(crate) fn ensure_local_auth(
         tracing::debug!(method = %method, path = %path, "public model catalog request skips local auth");
         return Ok(());
     }
+    if is_public_connectivity_hello_request(method, path) {
+        tracing::debug!(
+            method = %method,
+            path = %path,
+            "public connectivity hello skips local auth"
+        );
+        return Ok(());
+    }
     if is_allowed_cors_preflight_request(config, headers, method) {
         tracing::debug!(method = %method, path = %path, "cors preflight skips local auth");
         return Ok(());
@@ -94,6 +104,27 @@ fn is_public_model_catalog_request(method: &Method, path: &str) -> bool {
             path,
             OPENAI_MODELS_INDEX_PATH | OPENAI_COMPATIBLE_MODELS_INDEX_PATH
         )
+}
+
+/// Claude Code 探活只接受 GET/HEAD；POST 仍走本地 key。
+pub(crate) fn is_public_connectivity_hello_request(method: &Method, path: &str) -> bool {
+    matches!(method.as_str(), "GET" | "HEAD") && path == CLAUDE_CONNECTIVITY_HELLO_PATH
+}
+
+/// 探活成功体：Claude Code 只校验 HTTP 200；HEAD 无 body。
+pub(crate) fn connectivity_hello_response(method: &Method) -> Response {
+    let mut response = if *method == Method::HEAD {
+        Response::new(Body::empty())
+    } else {
+        let mut response = Response::new(Body::from(json!({ "ok": true }).to_string()));
+        response.headers_mut().insert(
+            axum::http::header::CONTENT_TYPE,
+            HeaderValue::from_static("application/json"),
+        );
+        response
+    };
+    *response.status_mut() = StatusCode::OK;
+    response
 }
 
 pub(crate) fn cors_preflight_response(

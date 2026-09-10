@@ -4489,6 +4489,74 @@ fn models_index_allows_missing_local_key_when_local_auth_enabled() {
 }
 
 #[test]
+fn connectivity_hello_allows_missing_local_key_and_skips_request_log() {
+    run_async(async {
+        let data_dir =
+            next_test_data_dir("connectivity_hello_allows_missing_local_key_and_skips_request_log");
+        let mut config = config_with_runtime_upstreams(&[(
+            PROVIDER_RESPONSES,
+            0,
+            "alpha",
+            "https://example.com",
+            FORMATS_RESPONSES,
+        )]);
+        config.local_api_key = Some("local-key".to_string());
+        let (state, pool) = build_test_state_handle_with_sqlite_log(config, data_dir).await;
+
+        let get = proxy_request(
+            State(state.clone()),
+            Method::GET,
+            Uri::from_static("/api/hello"),
+            HeaderMap::new(),
+            Body::empty(),
+        )
+        .await;
+        assert_eq!(get.status(), StatusCode::OK);
+        let get_body = to_bytes(get.into_body(), usize::MAX)
+            .await
+            .expect("hello get body");
+        let get_json: Value = serde_json::from_slice(&get_body).expect("hello get json");
+        assert_eq!(get_json, json!({ "ok": true }));
+
+        let head = proxy_request(
+            State(state.clone()),
+            Method::HEAD,
+            Uri::from_static("/api/hello"),
+            HeaderMap::new(),
+            Body::empty(),
+        )
+        .await;
+        assert_eq!(head.status(), StatusCode::OK);
+
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        let hello_logs = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM request_logs WHERE path = '/api/hello';",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("count hello logs");
+        assert_eq!(
+            hello_logs, 0,
+            "connectivity hello must not write request_logs"
+        );
+
+        let post = proxy_request(
+            State(state),
+            Method::POST,
+            Uri::from_static("/api/hello"),
+            HeaderMap::new(),
+            Body::empty(),
+        )
+        .await;
+        assert_eq!(post.status(), StatusCode::UNAUTHORIZED);
+        wait_for_request_log_count(&pool, 1).await;
+        let (status, error) = wait_for_latest_request_log_status_and_error(&pool).await;
+        assert_eq!(status, 401);
+        assert_eq!(error.as_deref(), Some("Missing local access key."));
+    });
+}
+
+#[test]
 fn models_index_adds_prefixed_entries_and_duplicate_alias_when_enabled() {
     run_async(async {
         let upstream_a = spawn_model_catalog_upstream(json!({

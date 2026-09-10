@@ -131,6 +131,20 @@ async fn proxy_request_inner(
         return response;
     }
 
+    // Claude Code 启动会 HEAD/GET /api/hello；无 key、不转发、不写 request_logs。
+    if http::is_public_connectivity_hello_request(&method, &path) {
+        tracing::info!(
+            method = %method,
+            path = %path,
+            "serving unauthenticated connectivity hello"
+        );
+        return http::with_cors_headers(
+            &state.config,
+            &headers,
+            http::connectivity_hello_response(&method),
+        );
+    }
+
     let is_codex_models_manifest =
         codex_models_manifest::is_request(&method, &path, query.as_deref());
     // OpenAI 兼容模型索引：跨全部 enabled upstream 并集，不按 priority 单选 provider。
