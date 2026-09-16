@@ -81,6 +81,7 @@ function EditorSection({ title, description, children }: EditorSectionProps) {
 type UpstreamConnectionFieldsProps = {
   draft: UpstreamForm;
   providerOptions: readonly string[];
+  appProxyUrl: string;
   showApiKeys: boolean;
   onToggleApiKeys: () => void;
   onChangeDraft: (patch: Partial<UpstreamForm>) => void;
@@ -89,6 +90,7 @@ type UpstreamConnectionFieldsProps = {
 function UpstreamConnectionFields({
   draft,
   providerOptions,
+  appProxyUrl,
   showApiKeys,
   onToggleApiKeys,
   onChangeDraft,
@@ -97,6 +99,8 @@ function UpstreamConnectionFields({
   const isAccountBacked = isAccountBackedProviderSet(providers);
   const isKiro = providers.includes("kiro");
   const identityLocked = isAccountIdentityLocked(draft);
+  // 应用级代理为空时隐藏快捷填充按钮，避免写入无效的 $app_proxy_url 占位符。
+  const canUseAppProxy = !!appProxyUrl.trim();
   // 编辑既有账户 Upstream 时，mergeProviderOptions 已排除 Kiro/Codex/xAI；
   // 将当前 draft.providers 并回选项，保证展示与锁定身份一致。
   const editorProviderOptions = (() => {
@@ -111,6 +115,16 @@ function UpstreamConnectionFields({
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-[minmax(7rem,auto)_1fr] items-center gap-x-4 gap-y-4">
+        <EditorField label={m.field_id()} tooltip={m.field_id_tip()} htmlFor="upstream-editor-id">
+          <Input
+            id="upstream-editor-id"
+            value={draft.id}
+            disabled={identityLocked}
+            onChange={(event) => onChangeDraft({ id: event.target.value })}
+            placeholder="openai-default"
+          />
+        </EditorField>
+
         <EditorField label={m.field_provider()} tooltip={m.field_provider_tip()}>
           <ProviderMultiSelect
             providerOptions={editorProviderOptions}
@@ -182,6 +196,46 @@ function UpstreamConnectionFields({
             </EditorField>
           </>
         )}
+
+        <EditorField
+          label={m.field_proxy_url()}
+          tooltip={m.upstreams_proxy_tip({ placeholder: "$app_proxy_url" })}
+          htmlFor="upstream-editor-proxyUrl"
+        >
+          <div className="flex items-center gap-2">
+            <Input
+              id="upstream-editor-proxyUrl"
+              value={draft.proxyUrl}
+              onChange={(event) => onChangeDraft({ proxyUrl: event.target.value })}
+              placeholder="http://127.0.0.1:7890"
+              className="min-w-0 flex-1"
+            />
+            {canUseAppProxy ? (
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                onClick={() => onChangeDraft({ proxyUrl: "$app_proxy_url" })}
+              >
+                {m.upstreams_proxy_use_app()}
+              </Button>
+            ) : null}
+          </div>
+        </EditorField>
+
+        <EditorField
+          label={m.field_priority()}
+          tooltip={m.field_priority_tip()}
+          htmlFor="upstream-editor-priority"
+        >
+          <Input
+            id="upstream-editor-priority"
+            value={draft.priority}
+            onChange={(event) => onChangeDraft({ priority: event.target.value })}
+            placeholder="0"
+            inputMode="numeric"
+          />
+        </EditorField>
       </div>
 
       {providers.length === 1 && providers[0] && isAccountProviderKind(providers[0]) ? (
@@ -377,18 +431,10 @@ function UpstreamHeaderOverrideFields({
   );
 }
 
-type UpstreamAdvancedFieldsProps = UpstreamOpenAIResponsesFieldsProps & {
-  appProxyUrl: string;
-};
-
 function UpstreamAdvancedFields({
   draft,
-  appProxyUrl,
   onChangeDraft,
-}: UpstreamAdvancedFieldsProps) {
-  const identityLocked = isAccountIdentityLocked(draft);
-  const canUseAppProxy = !!appProxyUrl.trim();
-
+}: UpstreamOpenAIResponsesFieldsProps) {
   return (
     <details className="group">
       <summary className="flex cursor-pointer list-none items-center justify-between gap-4 rounded-md py-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
@@ -404,56 +450,6 @@ function UpstreamAdvancedFields({
         />
       </summary>
       <div className="mt-4 grid grid-cols-[minmax(7rem,auto)_1fr] items-center gap-x-4 gap-y-4 border-t pt-4">
-        <EditorField label={m.field_id()} tooltip={m.field_id_tip()} htmlFor="upstream-editor-id">
-          <Input
-            id="upstream-editor-id"
-            value={draft.id}
-            disabled={identityLocked}
-            onChange={(event) => onChangeDraft({ id: event.target.value })}
-            placeholder="openai-default"
-          />
-        </EditorField>
-
-        <EditorField
-          label={m.field_proxy_url()}
-          tooltip={m.upstreams_proxy_tip({ placeholder: "$app_proxy_url" })}
-          htmlFor="upstream-editor-proxyUrl"
-        >
-          <div className="flex items-center gap-2">
-            <Input
-              id="upstream-editor-proxyUrl"
-              value={draft.proxyUrl}
-              onChange={(event) => onChangeDraft({ proxyUrl: event.target.value })}
-              placeholder="http://127.0.0.1:7890"
-              className="min-w-0 flex-1"
-            />
-            {canUseAppProxy ? (
-              <Button
-                type="button"
-                size="sm"
-                variant="secondary"
-                onClick={() => onChangeDraft({ proxyUrl: "$app_proxy_url" })}
-              >
-                {m.upstreams_proxy_use_app()}
-              </Button>
-            ) : null}
-          </div>
-        </EditorField>
-
-        <EditorField
-          label={m.field_priority()}
-          tooltip={m.field_priority_tip()}
-          htmlFor="upstream-editor-priority"
-        >
-          <Input
-            id="upstream-editor-priority"
-            value={draft.priority}
-            onChange={(event) => onChangeDraft({ priority: event.target.value })}
-            placeholder="0"
-            inputMode="numeric"
-          />
-        </EditorField>
-
         <ConvertFromMapEditor
           key={draft.providers.join("|")}
           providers={draft.providers}
@@ -485,6 +481,7 @@ export function UpstreamEditorFields({
         <UpstreamConnectionFields
           draft={draft}
           providerOptions={providerOptions}
+          appProxyUrl={appProxyUrl}
           showApiKeys={showApiKeys}
           onToggleApiKeys={onToggleApiKeys}
           onChangeDraft={onChangeDraft}
@@ -502,11 +499,7 @@ export function UpstreamEditorFields({
         />
       </EditorSection>
 
-      <UpstreamAdvancedFields
-        draft={draft}
-        appProxyUrl={appProxyUrl}
-        onChangeDraft={onChangeDraft}
-      />
+      <UpstreamAdvancedFields draft={draft} onChangeDraft={onChangeDraft} />
     </div>
   );
 }

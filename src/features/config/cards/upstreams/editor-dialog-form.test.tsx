@@ -261,7 +261,7 @@ describe("upstreams/editor-dialog-form", () => {
 
     expect(screen.queryByLabelText(m.field_base_url())).not.toBeInTheDocument();
     expect(screen.queryByLabelText(m.field_api_key())).not.toBeInTheDocument();
-    // proxy 属于 Upstream 路由字段，在 Advanced 中可编辑。
+    // proxy 属于 Upstream 路由字段，已提到连接区直接可编辑。
     expect(screen.getByLabelText(m.field_proxy_url())).toBeInTheDocument();
     expect(screen.getByLabelText(m.field_id())).toBeEnabled();
     expect(screen.getByRole("button", { name: /antigravity/i })).toBeEnabled();
