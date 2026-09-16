@@ -36,6 +36,16 @@ fn append_responses_input_item_to_chat_messages(
         return Err("Responses input item must be an object.".to_string());
     };
 
+    // 扩展任务消息进入普通 user 历史，并结束前一条 reasoning 的关联。
+    if let Some(text) = token_proxy_protocol::responses_input::agent_message_text(item) {
+        if !text.is_empty() {
+            messages.push(json!({"role":"user","content":text}));
+        }
+        pending_reasoning.clear();
+        *pending_gemini_signature = None;
+        return Ok(());
+    }
+
     // Cherry Studio / Codex CLI 可能会直接传 `[{ role, content:[{type,text}...] }]`，
     // 这里需要把 content parts 归一化成 Chat API 需要的字符串/多模态数组。
     if item.get("role").and_then(Value::as_str).is_some() {
@@ -356,5 +366,29 @@ fn responses_message_content_to_chat_content(value: &Value) -> Option<Value> {
             }
         }
         _ => Some(Value::String(String::new())),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn agent_message_preserves_task_parts_and_clears_reasoning_context() {
+        let messages = responses_input_to_chat_messages(&[
+            json!({"type":"reasoning","summary":[{"type":"summary_text","text":"old reasoning"}],"encrypted_content":"opaque"}),
+            json!({"type":"agent_message","content":[{"type":"input_text","text":"task: "},{"type":"encrypted_content","encrypted_content":"fix bug"},{"type":"text","text":" now"}]}),
+            json!({"type":"agent_message","content":"reply"}),
+            json!({"type":"agent_message","content":[]}),
+            json!({"role":"assistant","content":"answer"}),
+        ]).unwrap();
+        assert_eq!(
+            messages,
+            vec![
+                json!({"role":"user","content":"task: fix bug now"}),
+                json!({"role":"user","content":"reply"}),
+                json!({"role":"assistant","content":"answer"})
+            ]
+        );
     }
 }

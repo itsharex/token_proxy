@@ -29,6 +29,10 @@ where
     try_unfold(state, |state| async move { state.step().await })
 }
 
+mod tool_order;
+
+const MAX_TOOL_ARGUMENT_BYTES: usize = 1024 * 1024;
+
 enum ActiveBlock {
     Text { index: usize },
     Thinking { index: usize },
@@ -42,7 +46,8 @@ struct ToolUseState {
     name: String,
     sent_start: bool,
     sent_stop: bool,
-    sent_input: bool,
+    arguments: String,
+    explicitly_done: bool,
 }
 
 struct ReasoningBlockState {
@@ -86,8 +91,11 @@ struct ResponsesToAnthropicState<S> {
     web_searches: HashMap<String, WebSearchState>,
     redacted_reasoning_emitted: HashSet<String>,
     saw_tool_use: bool,
+    invalid_tool_arguments: bool,
+    tool_order: tool_order::ToolEventOrder,
     stop_reason_override: Option<&'static str>,
     saw_reasoning_delta: bool,
+    text_recovery: token_proxy_protocol::responses_text::ResponsesTextRecovery,
     response_body_buf: String,
 }
 
@@ -148,8 +156,11 @@ where
             web_searches: HashMap::new(),
             redacted_reasoning_emitted: HashSet::new(),
             saw_tool_use: false,
+            invalid_tool_arguments: false,
+            tool_order: Default::default(),
             stop_reason_override: None,
             saw_reasoning_delta: false,
+            text_recovery: Default::default(),
             response_body_buf: String::new(),
         }
     }
@@ -192,6 +203,7 @@ where
                     for data in events {
                         self.handle_event(&data, &mut texts);
                     }
+                    self.flush_tool_events(&mut texts);
                     for text in texts {
                         self.token_tracker.add_output_text(&text).await;
                     }
@@ -210,13 +222,11 @@ where
             return;
         }
         if data == "[DONE]" {
+            self.flush_tool_events(token_texts);
             self.finish_message_if_needed();
             return;
         }
         let Ok(value) = serde_json::from_str::<Value>(data) else {
-            return;
-        };
-        let Some(event_type) = value.get("type").and_then(Value::as_str) else {
             return;
         };
         if let Some(error) = responses_stream_error(&value) {
@@ -224,46 +234,75 @@ where
             return;
         }
 
-        if event_type.ends_with("output_text.delta") {
-            self.handle_output_text_delta(&value, token_texts);
+        match self.tool_order.push(value) {
+            Ok(events) => {
+                for event in events {
+                    self.handle_response_event(&event, token_texts);
+                }
+            }
+            Err(()) => self.fail_tool_buffer(),
+        }
+    }
+
+    fn flush_tool_events(&mut self, token_texts: &mut Vec<String>) {
+        for event in self.tool_order.finish() {
+            self.handle_response_event(&event, token_texts);
+        }
+    }
+
+    fn fail_tool_buffer(&mut self) {
+        self.fail_stream(ResponsesStreamError {
+            message: "Interleaved tool stream exceeded the conversion buffer limit.".to_string(),
+            error_type: "upstream_protocol_error".to_string(),
+            code: Some(json!("tool_stream_buffer_limit")),
+            status: axum::http::StatusCode::BAD_GATEWAY,
+            retryable_before_output: false,
+        });
+    }
+
+    fn handle_response_event(&mut self, value: &Value, token_texts: &mut Vec<String>) {
+        if self.stream_failed {
             return;
+        }
+        let Some(event_type) = value.get("type").and_then(Value::as_str) else {
+            return;
+        };
+        for text in self.text_recovery.process(value) {
+            self.emit_output_text(&text, token_texts);
         }
         if event_type.ends_with("reasoning_text.delta")
             || event_type.ends_with("reasoning_summary_text.delta")
         {
-            self.handle_reasoning_text_delta(&value, token_texts);
+            self.handle_reasoning_text_delta(value, token_texts);
             return;
         }
         if event_type.ends_with("output_item.added") {
-            self.handle_output_item_added(&value);
+            self.handle_output_item_added(value);
             return;
         }
         if event_type.ends_with("function_call_arguments.delta") {
-            self.handle_function_call_arguments_delta(&value);
+            self.handle_function_call_arguments_delta(value);
             return;
         }
         if event_type.ends_with("function_call_arguments.done") {
-            self.handle_function_call_arguments_done(&value);
+            self.handle_function_call_arguments_done(value);
             return;
         }
         if event_type.ends_with("output_item.done") {
-            self.handle_output_item_done(&value);
+            self.handle_output_item_done(value);
             return;
         }
         if event_type.ends_with("response.completed") {
-            self.handle_response_completed(&value);
+            self.handle_response_completed(value);
             return;
         }
         if event_type.ends_with("response.incomplete") {
-            self.handle_response_incomplete(&value);
+            self.handle_response_incomplete(value);
             return;
         }
     }
 
-    fn handle_output_text_delta(&mut self, value: &Value, token_texts: &mut Vec<String>) {
-        let Some(delta) = value.get("delta").and_then(Value::as_str) else {
-            return;
-        };
+    fn emit_output_text(&mut self, delta: &str, token_texts: &mut Vec<String>) {
         token_texts.push(delta.to_string());
         self.ensure_message_start();
         let index = self.ensure_text_block();
@@ -350,32 +389,29 @@ where
         let Some(delta) = value.get("delta").and_then(Value::as_str) else {
             return;
         };
+        self.emit_tool_delta(item_id, delta);
+    }
+
+    // 仅向打开的块追加参数，关闭后的迟到 delta 不能重新打开同一 index。
+    fn emit_tool_delta(&mut self, item_id: &str, delta: &str) {
         self.ensure_message_start();
-        self.ensure_tool_use_state(item_id);
-        if !self
-            .tool_uses
-            .get(item_id)
-            .is_some_and(|state| state.sent_start)
-        {
-            self.start_tool_use_block(item_id);
-        }
-        self.set_active_tool_use(item_id);
-        let Some(index) = self.tool_uses.get(item_id).map(|state| state.index) else {
+        let state = self.ensure_tool_use_state(item_id);
+        if state.sent_stop || delta.is_empty() {
             return;
-        };
+        }
+        if state.arguments.len().saturating_add(delta.len()) > MAX_TOOL_ARGUMENT_BYTES {
+            self.fail_tool_buffer();
+            return;
+        }
+        state.arguments.push_str(delta);
+        self.start_tool_use_block(item_id);
+        self.set_active_tool_use(item_id);
+        let index = self.tool_uses[item_id].index;
         self.out.push_back(super::anthropic_event_sse(
             "content_block_delta",
-            json!({
-                "type": "content_block_delta",
-                "index": index,
-                "delta": { "type": "input_json_delta", "partial_json": delta }
-            }),
+            json!({"type":"content_block_delta","index":index,
+                "delta":{"type":"input_json_delta","partial_json":delta}}),
         ));
-        // Claude Code 会把 input_json_delta 的 partial_json 逐段拼接成最终 JSON。
-        // 若我们在 arguments.done 再发送一次完整 arguments，会导致拼接重复并变成非法 JSON（最终 tool input 变成 {}）。
-        if let Some(state) = self.tool_uses.get_mut(item_id) {
-            state.sent_input = true;
-        }
     }
 
     fn handle_function_call_arguments_done(&mut self, value: &Value) {
@@ -384,7 +420,8 @@ where
         };
         let arguments = value.get("arguments").and_then(Value::as_str).unwrap_or("");
         self.ensure_message_start();
-        self.ensure_tool_use_state(item_id);
+        self.ensure_tool_use_state(item_id).explicitly_done = true;
+        self.start_tool_use_block(item_id);
         self.emit_tool_use_arguments(item_id, arguments);
         self.stop_tool_use_block(item_id);
     }
@@ -399,7 +436,17 @@ where
                     return;
                 };
                 self.ensure_message_start();
-                self.ensure_tool_use_state(item_id);
+                let call_id = item
+                    .get("call_id")
+                    .and_then(Value::as_str)
+                    .unwrap_or(item_id);
+                let name = item.get("name").and_then(Value::as_str).unwrap_or("");
+                self.ensure_tool_use_block(item_id, call_id, name);
+                self.ensure_tool_use_state(item_id).explicitly_done = true;
+                self.emit_tool_use_arguments(
+                    item_id,
+                    item.get("arguments").and_then(Value::as_str).unwrap_or(""),
+                );
                 self.stop_tool_use_block(item_id);
             }
             Some("reasoning") => {
@@ -483,6 +530,7 @@ where
                             item_id.to_string()
                         };
                         self.ensure_tool_use_block(item_id, &tool_use_id, name);
+                        self.ensure_tool_use_state(item_id).explicitly_done = true;
                         self.emit_tool_use_arguments(item_id, arguments);
                         self.stop_tool_use_block(item_id);
                     }
@@ -802,7 +850,8 @@ where
                     name: name.to_string(),
                     sent_start: false,
                     sent_stop: false,
-                    sent_input: false,
+                    arguments: String::new(),
+                    explicitly_done: false,
                 },
             );
         }
@@ -837,7 +886,8 @@ where
                     name: String::new(),
                     sent_start: false,
                     sent_stop: false,
-                    sent_input: false,
+                    arguments: String::new(),
+                    explicitly_done: false,
                 }
             })
     }
@@ -883,30 +933,17 @@ where
     }
 
     fn emit_tool_use_arguments(&mut self, item_id: &str, arguments: &str) {
-        if arguments.trim().is_empty() {
-            return;
-        }
         let state = self.ensure_tool_use_state(item_id);
-        if state.sent_input {
+        if state.sent_stop {
             return;
         }
-        if !state.sent_start {
-            self.start_tool_use_block(item_id);
-        }
-        self.set_active_tool_use(item_id);
-        let Some(index) = self.tool_uses.get(item_id).map(|state| state.index) else {
-            return;
-        };
-        self.out.push_back(super::anthropic_event_sse(
-            "content_block_delta",
-            json!({
-                "type": "content_block_delta",
-                "index": index,
-                "delta": { "type": "input_json_delta", "partial_json": arguments }
-            }),
-        ));
-        if let Some(state) = self.tool_uses.get_mut(item_id) {
-            state.sent_input = true;
+        // done/terminal 只能补齐已发前缀，不能重复发送完整快照或猜测修复 JSON。
+        if let Some(tail) = arguments
+            .strip_prefix(&state.arguments)
+            .filter(|tail| !tail.is_empty())
+        {
+            let tail = tail.to_string();
+            self.emit_tool_delta(item_id, &tail);
         }
     }
 
@@ -1031,9 +1068,19 @@ where
         let Some(state) = self.tool_uses.get_mut(item_id) else {
             return;
         };
-        if state.sent_stop {
+        if state.sent_stop || !state.sent_start {
             return;
         }
+        let valid = (state.arguments.is_empty() && state.explicitly_done)
+            || serde_json::from_str::<Value>(&state.arguments).is_ok_and(|value| value.is_object());
+        if !valid {
+            self.invalid_tool_arguments = true;
+            tracing::debug!(
+                argument_bytes = state.arguments.len(),
+                "incomplete Anthropic tool arguments"
+            );
+        }
+        state.arguments = String::new();
         state.sent_stop = true;
         if matches!(
             &self.active_block,
@@ -1103,13 +1150,16 @@ where
         self.ensure_message_start();
         self.stop_active_block();
 
-        let stop_reason = self.stop_reason_override.unwrap_or_else(|| {
+        let mut stop_reason = self.stop_reason_override.unwrap_or_else(|| {
             if self.saw_tool_use {
                 "tool_use"
             } else {
                 "end_turn"
             }
         });
+        if self.invalid_tool_arguments && matches!(stop_reason, "tool_use" | "end_turn") {
+            stop_reason = "max_tokens";
+        }
         let usage = self.collector.finish();
         let (input_tokens, output_tokens) = usage
             .usage

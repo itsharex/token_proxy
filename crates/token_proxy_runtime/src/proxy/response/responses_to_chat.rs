@@ -50,7 +50,7 @@ struct ResponsesToChatState<S> {
     content_parts_sent: bool,
     audio_sent: bool,
     finish_reason_override: Option<&'static str>,
-    saw_text_delta: bool,
+    text_recovery: token_proxy_protocol::responses_text::ResponsesTextRecovery,
     saw_reasoning_delta: bool,
     sent_redacted_thinking: bool,
     final_usage: Option<Value>,
@@ -120,7 +120,7 @@ where
             content_parts_sent: false,
             audio_sent: false,
             finish_reason_override: None,
-            saw_text_delta: false,
+            text_recovery: Default::default(),
             saw_reasoning_delta: false,
             sent_redacted_thinking: false,
             final_usage: None,
@@ -206,9 +206,8 @@ where
         if is_responses_terminal_event(event_type) {
             self.capture_terminal_usage(&value);
         }
-        if event_type.ends_with("output_text.delta") {
-            self.handle_output_text_delta(&value, token_texts);
-            return;
+        for text in self.text_recovery.process(&value) {
+            self.emit_output_text(&text, token_texts);
         }
         if event_type.ends_with("reasoning_text.delta")
             || event_type.ends_with("reasoning_summary_text.delta")
@@ -255,11 +254,7 @@ where
         }
     }
 
-    fn handle_output_text_delta(&mut self, value: &Value, token_texts: &mut Vec<String>) {
-        let Some(delta) = value.get("delta").and_then(Value::as_str) else {
-            return;
-        };
-        self.saw_text_delta = true;
+    fn emit_output_text(&mut self, delta: &str, token_texts: &mut Vec<String>) {
         token_texts.push(delta.to_string());
         self.ensure_role_sent();
         self.out.push_back(chat_chunk_sse(
@@ -576,18 +571,8 @@ where
             return;
         }
         let non_text_parts = compat_content::chat_message_non_text_parts_from_responses(parts);
-        let delta_content = if !non_text_parts.is_empty() {
-            Some(Value::Array(non_text_parts))
-        } else if !self.saw_text_delta {
-            let content = compat_content::chat_message_content_from_responses_parts(parts);
-            if chat_content_is_empty(&content) {
-                None
-            } else {
-                Some(content)
-            }
-        } else {
-            None
-        };
+        // 正文已由按 part 对账的恢复器输出，这里仅保留多模态内容。
+        let delta_content = (!non_text_parts.is_empty()).then_some(Value::Array(non_text_parts));
         let Some(delta_content) = delta_content else {
             return;
         };
@@ -810,15 +795,6 @@ fn extract_reasoning_summary(item: &Map<String, Value>) -> String {
         }
     }
     reasoning
-}
-
-fn chat_content_is_empty(content: &Value) -> bool {
-    match content {
-        Value::Null => true,
-        Value::String(text) => text.is_empty(),
-        Value::Array(parts) => parts.is_empty(),
-        _ => false,
-    }
 }
 
 fn tool_call_id(call_id: &str, item_id: &str) -> String {

@@ -8,6 +8,7 @@ mod request;
 mod response;
 mod stream;
 mod tool_names;
+mod tool_schema;
 
 #[derive(Clone)]
 pub(super) struct RestoredToolName {

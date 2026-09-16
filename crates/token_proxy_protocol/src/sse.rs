@@ -1,5 +1,5 @@
 pub struct SseEventParser {
-    buffer: String,
+    buffer: Vec<u8>,
     current_data: String,
 }
 
@@ -39,33 +39,44 @@ pub fn split_responses_json_documents(payload: &[u8]) -> Option<Vec<Vec<u8>>> {
 impl SseEventParser {
     pub fn new() -> Self {
         Self {
-            buffer: String::new(),
+            buffer: Vec::new(),
             current_data: String::new(),
         }
     }
 
     pub fn push_chunk<F: FnMut(String)>(&mut self, chunk: &[u8], mut on_event: F) {
-        let text = String::from_utf8_lossy(chunk);
-        self.buffer.push_str(&text);
-        while let Some(pos) = self.buffer.find('\n') {
-            let mut line = self.buffer[..pos].to_string();
-            self.buffer.drain(..=pos);
-            if line.ends_with('\r') {
-                line.pop();
+        // 网络分片可能切在 UTF-8 字符中间；只在整行收齐后解码，并复用行缓冲。
+        for part in chunk.split_inclusive(|byte| *byte == b'\n') {
+            self.buffer.extend_from_slice(part);
+            if part.last() == Some(&b'\n') {
+                self.buffer.pop();
+                self.process_buffered_line(&mut on_event);
             }
-            self.process_line(&line, &mut on_event);
         }
     }
 
     pub fn finish<F: FnMut(String)>(&mut self, mut on_event: F) {
         if !self.buffer.is_empty() {
-            let mut buffer = std::mem::take(&mut self.buffer);
-            if buffer.ends_with('\r') {
-                buffer.pop();
-            }
-            self.process_line(&buffer, &mut on_event);
+            self.process_buffered_line(&mut on_event);
         }
         self.flush_event(&mut on_event);
+    }
+
+    fn process_buffered_line<F: FnMut(String)>(&mut self, on_event: &mut F) {
+        let mut buffer = std::mem::take(&mut self.buffer);
+        if buffer.last() == Some(&b'\r') {
+            buffer.pop();
+        }
+        let line = String::from_utf8_lossy(&buffer);
+        if matches!(line, std::borrow::Cow::Owned(_)) {
+            tracing::debug!(
+                line_bytes = buffer.len(),
+                "replaced invalid UTF-8 in SSE line"
+            );
+        }
+        self.process_line(&line, on_event);
+        buffer.clear();
+        self.buffer = buffer;
     }
 
     fn process_line<F: FnMut(String)>(&mut self, line: &str, on_event: &mut F) {
@@ -111,6 +122,19 @@ impl SseEventParser {
 #[cfg(test)]
 mod tests {
     use super::{split_responses_json_documents, SseEventParser};
+
+    #[test]
+    fn utf8_survives_every_network_split_and_unterminated_final_line() {
+        let data = "data: 你好🦀\r\n\r\ndata: 最后";
+        for split in 0..=data.len() {
+            let mut parser = SseEventParser::new();
+            let mut events = Vec::new();
+            parser.push_chunk(&data.as_bytes()[..split], |event| events.push(event));
+            parser.push_chunk(&data.as_bytes()[split..], |event| events.push(event));
+            parser.finish(|event| events.push(event));
+            assert_eq!(events, ["你好🦀", "最后"], "split {split}");
+        }
+    }
 
     #[test]
     fn splits_concatenated_responses_json_documents() {

@@ -106,8 +106,8 @@ pub(crate) fn gemini_response_to_chat(
 
     let usage = object
         .get("usageMetadata")
-        .and_then(Value::as_object)
-        .map(gemini_usage_to_chat_usage);
+        .filter(|usage| usage.is_object())
+        .map(token_proxy_protocol::gemini_usage::to_chat);
 
     let out = json!({
         "id": id,
@@ -480,37 +480,6 @@ fn looks_like_image_uri(uri: &str) -> bool {
         extension.as_deref(),
         Some("png" | "jpg" | "jpeg" | "gif" | "webp")
     )
-}
-
-/// 将 Gemini usageMetadata 转换为 Chat usage
-fn gemini_usage_to_chat_usage(usage: &Map<String, Value>) -> Value {
-    let prompt_tokens = usage
-        .get("promptTokenCount")
-        .and_then(Value::as_u64)
-        .unwrap_or(0);
-    let completion_tokens = usage
-        .get("candidatesTokenCount")
-        .and_then(Value::as_u64)
-        .unwrap_or(0);
-    let total_tokens = usage
-        .get("totalTokenCount")
-        .and_then(Value::as_u64)
-        .unwrap_or(prompt_tokens + completion_tokens);
-    let cached_tokens = usage.get("cachedContentTokenCount").and_then(Value::as_u64);
-
-    let mut result = json!({
-        "prompt_tokens": prompt_tokens,
-        "completion_tokens": completion_tokens,
-        "total_tokens": total_tokens
-    });
-
-    if let Some(cached) = cached_tokens {
-        if let Some(obj) = result.as_object_mut() {
-            obj.insert("cached_tokens".to_string(), json!(cached));
-        }
-    }
-
-    result
 }
 
 fn chat_choice_to_gemini_candidate(choice: &Value, index: usize) -> Option<Value> {

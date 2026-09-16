@@ -1711,6 +1711,52 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn native_responses_prelude_retries_overload_after_empty_added() {
+        let upstream_res = reqwest_response_from_delayed_chunks(vec![(
+            Duration::ZERO,
+            "data: {\"type\":\"response.output_item.added\",\"item\":{\"type\":\"message\",\"content\":[]}}\n\n",
+        ),(
+            Duration::ZERO,
+            "data: {\"type\":\"response.failed\",\"response\":{\"error\":{\"type\":\"server_error\",\"code\":\"server_overloaded\",\"message\":\"try later\"}}}\n\n",
+        )]);
+        let mut context = test_context();
+        context.provider = PROVIDER_OPENAI_RESPONSES.to_string();
+        let log = Arc::new(LogWriter::new(None));
+
+        let response = match prepare_upstream_stream(
+            StatusCode::OK,
+            &HeaderMap::new(),
+            upstream_res,
+            FormatTransform::None,
+            &mut context,
+            &log,
+            Duration::from_secs(1),
+            Duration::from_secs(1),
+            Duration::from_secs(30),
+        )
+        .await
+        {
+            Ok(_) => panic!("empty-added pre-output error should trigger failover"),
+            Err(response) => response,
+        };
+
+        let retry = response
+            .extensions()
+            .get::<RetryableStreamResponse>()
+            .expect("retry marker");
+        assert!(retry.message.contains("server_overloaded"));
+
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("read retry response body");
+        let body = String::from_utf8(body.to_vec()).expect("SSE body");
+        assert!(
+            body.contains("\"sequence_number\":0"),
+            "prelude terminal event must start the Responses sequence: {body}"
+        );
+    }
+
+    #[tokio::test]
     async fn native_responses_prelude_retries_empty_incomplete_before_output() {
         let upstream_res = reqwest_response_from_delayed_chunks(vec![(
             Duration::ZERO,

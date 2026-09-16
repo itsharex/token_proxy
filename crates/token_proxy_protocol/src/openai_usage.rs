@@ -112,6 +112,14 @@ pub fn map_usage_chat_to_responses(usage: &Value) -> Option<Value> {
     mapped.insert("output_tokens".to_string(), json!(completion));
     mapped.insert("total_tokens".to_string(), json!(total));
 
+    // Gemini 等组合转换需要保留缓存输入明细，避免后续计费把缓存计为普通输入。
+    if let Some(details) = usage
+        .get("prompt_tokens_details")
+        .filter(|value| value.is_object())
+    {
+        mapped.insert("input_tokens_details".to_string(), details.clone());
+    }
+
     // Preserve reasoning token details when converting Chat -> Responses.
     let reasoning_tokens = usage
         .get("completion_tokens_details")

@@ -57,6 +57,8 @@ struct GeminiToChatState<S> {
     logged: bool,
     upstream_ended: bool,
     tool_call_index: usize,
+    finish_reason: Option<&'static str>,
+    final_usage: Option<Value>,
     response_body_buf: String,
 }
 
@@ -150,6 +152,8 @@ where
             logged: false,
             upstream_ended: false,
             tool_call_index: 0,
+            finish_reason: None,
+            final_usage: None,
             response_body_buf: String::new(),
         }
     }
@@ -223,6 +227,10 @@ where
             return;
         };
 
+        // 用量可在 finishReason 之后单独到达，直到 EOF/[DONE] 才发送下游终止帧。
+        if let Some(usage) = value.get("usageMetadata").filter(|usage| usage.is_object()) {
+            self.final_usage = Some(token_proxy_protocol::gemini_usage::to_chat(usage));
+        }
         // 处理 Gemini 响应格式
         let Some(candidates) = value.get("candidates").and_then(Value::as_array) else {
             return;
@@ -244,7 +252,10 @@ where
         let Some(content) = candidate.get("content").and_then(Value::as_object) else {
             // 如果有 finishReason 但没有 content，发送完成信号
             if finish_reason.is_some() {
-                self.push_done(gemini_finish_reason_to_chat(finish_reason, false));
+                self.finish_reason = Some(gemini_finish_reason_to_chat(
+                    finish_reason,
+                    self.tool_call_index > 0,
+                ));
             }
             return;
         };
@@ -296,8 +307,11 @@ where
 
         // 处理完成原因
         if let Some(reason) = finish_reason {
-            let chat_reason = gemini_finish_reason_to_chat(Some(reason), has_tool_calls);
-            self.push_done(chat_reason);
+            let chat_reason = gemini_finish_reason_to_chat(
+                Some(reason),
+                has_tool_calls || self.tool_call_index > 0,
+            );
+            self.finish_reason = Some(chat_reason);
         }
     }
 
@@ -325,8 +339,14 @@ where
             self.created,
             &self.model,
             json!({}),
-            Some(finish_reason),
+            Some(self.finish_reason.unwrap_or(finish_reason)),
         ));
+        if let Some(usage) = self.final_usage.take() {
+            let chunk = json!({"id":self.chat_id,"object":"chat.completion.chunk",
+                "created":self.created,"model":self.model,"choices":[],"usage":usage});
+            self.out
+                .push_back(Bytes::from(format!("data: {chunk}\n\n")));
+        }
         self.out.push_back(Bytes::from("data: [DONE]\n\n"));
     }
 

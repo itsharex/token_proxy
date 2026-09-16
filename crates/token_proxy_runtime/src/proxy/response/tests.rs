@@ -67,6 +67,9 @@ fn parse_anthropic_sse(bytes: &Bytes) -> Option<(String, Value)> {
 #[path = "tests_part2.rs"]
 mod part2;
 
+#[path = "tests_compat_updates.rs"]
+mod compat_updates;
+
 async fn setup_responses_stream() -> (Arc<LogWriter>, LogContext, SqlitePool) {
     let sqlite_pool = create_test_sqlite_pool().await;
     let log = Arc::new(LogWriter::new(Some(sqlite_pool.clone())));

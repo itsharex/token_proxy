@@ -1,8 +1,6 @@
 use http::StatusCode;
 use serde_json::{Map, Value};
 
-use crate::sse::SseEventParser;
-
 const INVALID_EVENT_LIMIT: usize = 1024;
 
 #[derive(Debug, PartialEq, Eq)]
@@ -12,41 +10,8 @@ pub enum ResponsesPreludeDecision {
     ReadyForPassThrough,
 }
 
-pub struct ResponsesPreludeInspector {
-    parser: SseEventParser,
-    saw_business_output: bool,
-}
-
-impl ResponsesPreludeInspector {
-    pub fn new() -> Self {
-        Self {
-            parser: SseEventParser::new(),
-            saw_business_output: false,
-        }
-    }
-
-    pub fn inspect_chunk(&mut self, chunk: &[u8]) -> ResponsesPreludeDecision {
-        let mut events = Vec::new();
-        self.parser.push_chunk(chunk, |data| events.push(data));
-        for data in events {
-            match inspect_prelude_event(&data, self.saw_business_output) {
-                ResponsesPreludeDecision::Pending => {}
-                ResponsesPreludeDecision::ReadyForPassThrough => {
-                    self.saw_business_output |= has_business_output(&data);
-                    return ResponsesPreludeDecision::ReadyForPassThrough;
-                }
-                decision => return decision,
-            }
-        }
-        ResponsesPreludeDecision::Pending
-    }
-}
-
-impl Default for ResponsesPreludeInspector {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+mod prelude;
+pub use prelude::ResponsesPreludeInspector;
 
 /// Responses 流把失败编码在 HTTP 200 的 SSE 事件里；这里集中保存协议错误语义，
 /// 供 failover、格式转换和日志共用，避免各路径对同一事件得出不同结论。
@@ -57,90 +22,6 @@ pub struct ResponsesStreamError {
     pub code: Option<Value>,
     pub status: StatusCode,
     pub retryable_before_output: bool,
-}
-
-fn inspect_prelude_event(data: &str, saw_business_output: bool) -> ResponsesPreludeDecision {
-    if data == "[DONE]" {
-        return ResponsesPreludeDecision::ReadyForPassThrough;
-    }
-    let Ok(value) = serde_json::from_str::<Value>(data) else {
-        return ResponsesPreludeDecision::RetryableError(protocol_error(format!(
-            "OpenAI Responses upstream emitted invalid JSON stream event: {}",
-            truncate_event_text(data)
-        )));
-    };
-    if let Some(error) = responses_stream_error(&value) {
-        return if error.retryable_before_output {
-            ResponsesPreludeDecision::RetryableError(error)
-        } else {
-            ResponsesPreludeDecision::ReadyForPassThrough
-        };
-    }
-    if value.get("type").and_then(Value::as_str) == Some("response.incomplete")
-        && !saw_business_output
-        && is_empty_incomplete_response(&value)
-    {
-        tracing::debug!(
-            event_type = "response.incomplete",
-            output_items = 0usize,
-            output_tokens = 0u64,
-            "retrying empty Responses incomplete prelude before business output"
-        );
-        return ResponsesPreludeDecision::RetryableError(protocol_error(
-            "OpenAI Responses upstream returned an empty incomplete response".to_string(),
-        ));
-    }
-    match value.get("type").and_then(Value::as_str) {
-        Some("response.created" | "response.in_progress") => ResponsesPreludeDecision::Pending,
-        Some(_) => ResponsesPreludeDecision::ReadyForPassThrough,
-        None => ResponsesPreludeDecision::RetryableError(protocol_error(format!(
-            "OpenAI Responses upstream emitted malformed stream event: {}",
-            truncate_event_text(&value.to_string())
-        ))),
-    }
-}
-
-fn is_empty_incomplete_response(value: &Value) -> bool {
-    let response = value.get("response").unwrap_or(value);
-    let output_empty = match response.get("output") {
-        None => true,
-        Some(Value::Array(items)) => items.is_empty(),
-        Some(_) => false,
-    };
-    let output_tokens_zero = response
-        .get("usage")
-        .and_then(|usage| usage.get("output_tokens"))
-        .and_then(Value::as_u64)
-        .is_some_and(|tokens| tokens == 0);
-    output_empty && output_tokens_zero
-}
-
-// Empty deltas are transport noise; only content or completed output items block failover.
-fn has_business_output(data: &str) -> bool {
-    let Ok(value) = serde_json::from_str::<Value>(data) else {
-        return false;
-    };
-    match value.get("type").and_then(Value::as_str) {
-        Some(
-            "response.output_item.added"
-            | "response.output_item.done"
-            | "response.content_part.added"
-            | "response.content_part.done"
-            | "response.function_call_arguments.done"
-            | "response.custom_tool_call_input.done",
-        ) => true,
-        Some(
-            "response.output_text.delta"
-            | "response.reasoning_text.delta"
-            | "response.reasoning_summary_text.delta"
-            | "response.function_call_arguments.delta"
-            | "response.custom_tool_call_input.delta",
-        ) => value
-            .get("delta")
-            .and_then(Value::as_str)
-            .is_some_and(|delta| !delta.trim().is_empty()),
-        _ => false,
-    }
 }
 
 fn protocol_error(message: String) -> ResponsesStreamError {
@@ -698,7 +579,7 @@ mod tests {
 
 "#
             ),
-            ResponsesPreludeDecision::ReadyForPassThrough
+            ResponsesPreludeDecision::Pending
         );
         let decision = inspector.inspect_chunk(
             br#"data: {"type":"response.incomplete","response":{"output":[],"usage":{"output_tokens":0}}}

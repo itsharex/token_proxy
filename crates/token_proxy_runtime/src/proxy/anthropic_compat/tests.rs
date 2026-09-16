@@ -20,6 +20,27 @@ fn json_from_bytes(bytes: Bytes) -> Value {
 }
 
 #[test]
+fn responses_agent_message_preserves_task_body_in_anthropic_bridge() {
+    let value = run_async(async {
+        let clients = ProxyHttpClients::new().expect("http clients");
+        responses_request_to_anthropic(
+            &bytes_from_json(json!({
+                "model":"unit-model", "input":[{"type":"agent_message","content":[
+                    {"type":"input_text","text":"task: "},
+                    {"type":"encrypted_content","encrypted_content":"fix bug"}
+                ]}]
+            })),
+            &clients,
+        )
+        .await
+        .expect("transform")
+    });
+    let value: Value = serde_json::from_slice(&value).unwrap();
+    assert_eq!(value["messages"][0]["role"], "user");
+    assert_eq!(value["messages"][0]["content"][0]["text"], "task: fix bug");
+}
+
+#[test]
 fn anthropic_request_to_responses_maps_tools_and_tool_blocks() {
     let http_clients = ProxyHttpClients::new().expect("http clients");
 

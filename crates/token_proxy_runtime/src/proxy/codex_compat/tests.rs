@@ -2052,3 +2052,19 @@ fn responses_request_to_codex_adds_fallback_name_for_tool_call_input() {
     assert_eq!(value["input"][0]["call_id"], "call_1");
     assert_eq!(value["input"][0]["name"], "tool");
 }
+#[test]
+fn codex_request_removes_only_item_internal_metadata() {
+    let body = Bytes::from(json!({"model":"gpt-6-astra","input":[{
+        "type":"message","role":"user","internal_chat_message_metadata_passthrough":{"internal":true},
+        "content":[{"type":"input_text","text":"internal_chat_message_metadata_passthrough"}]
+    }]}).to_string());
+    let output = responses_request_to_codex(&body, None).unwrap();
+    let output: Value = serde_json::from_slice(&output).unwrap();
+    assert!(output["input"][0]
+        .get("internal_chat_message_metadata_passthrough")
+        .is_none());
+    assert_eq!(
+        output["input"][0]["content"][0]["text"],
+        "internal_chat_message_metadata_passthrough"
+    );
+}

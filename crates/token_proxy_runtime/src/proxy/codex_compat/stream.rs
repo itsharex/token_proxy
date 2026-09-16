@@ -44,6 +44,7 @@ struct CodexToChatState<S> {
     created: i64,
     model: String,
     function_call_index: i64,
+    text_recovery: token_proxy_protocol::responses_text::ResponsesTextRecovery,
     finish_reason: Option<&'static str>,
     sent_done: bool,
     logged: bool,
@@ -102,6 +103,7 @@ where
             created: now_ms,
             model,
             function_call_index: -1,
+            text_recovery: Default::default(),
             finish_reason: None,
             sent_done: false,
             logged: false,
@@ -181,6 +183,12 @@ where
             return;
         };
 
+        for text in self.text_recovery.process(&value) {
+            self.context.mark_first_output();
+            token_texts.push(text.clone());
+            self.push_chunk(json!({"role":"assistant","content":text}));
+        }
+
         match event_type {
             "response.created" => {
                 self.update_from_created(&value);
@@ -188,15 +196,6 @@ where
             }
             "response.in_progress" => {
                 self.push_preamble_keepalive();
-            }
-            "response.output_text.delta" => {
-                if let Some(delta) = value.get("delta").and_then(Value::as_str) {
-                    if !delta.is_empty() {
-                        self.context.mark_first_output();
-                    }
-                    token_texts.push(delta.to_string());
-                    self.push_chunk(json!({ "role": "assistant", "content": delta }));
-                }
             }
             "response.reasoning_summary_text.delta" => {
                 if let Some(delta) = value.get("delta").and_then(Value::as_str) {
@@ -215,6 +214,19 @@ where
             }
             "response.completed" => {
                 self.finish_reason = Some(self.resolve_finish_reason());
+            }
+            "response.incomplete" => {
+                self.finish_reason = Some(
+                    if value
+                        .pointer("/response/incomplete_details/reason")
+                        .and_then(Value::as_str)
+                        == Some("content_filter")
+                    {
+                        "content_filter"
+                    } else {
+                        "length"
+                    },
+                );
             }
             "response.failed" | "response.error" | "error" => {
                 self.fail_responses_stream(&value);

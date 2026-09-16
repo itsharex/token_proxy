@@ -77,6 +77,7 @@ fn contains_usage_metadata_fields(value: &Value) -> bool {
     [
         "promptTokenCount",
         "candidatesTokenCount",
+        "thoughtsTokenCount",
         "totalTokenCount",
         "cachedContentTokenCount",
     ]
@@ -249,10 +250,7 @@ fn snapshot_from_usage_metadata_value(value: &Value) -> UsageSnapshot {
         .get("promptTokenCount")
         .and_then(Value::as_u64)
         .unwrap_or(0);
-    let raw_output_tokens = value
-        .get("candidatesTokenCount")
-        .and_then(Value::as_u64)
-        .unwrap_or(0);
+    let raw_output_tokens = token_proxy_protocol::gemini_usage::output_tokens(value);
     let cache_read_tokens = value
         .get("cachedContentTokenCount")
         .and_then(Value::as_u64)
@@ -265,6 +263,7 @@ fn snapshot_from_usage_metadata_value(value: &Value) -> UsageSnapshot {
     };
     let has_usage = value.get("promptTokenCount").is_some()
         || value.get("candidatesTokenCount").is_some()
+        || value.get("thoughtsTokenCount").is_some()
         || value.get("totalTokenCount").is_some();
     UsageSnapshot {
         usage: has_usage.then(|| TokenUsage {

@@ -258,6 +258,15 @@ async fn responses_input_item_to_claude_messages(
     messages: &mut Vec<Value>,
     http_clients: &ProxyHttpClients,
 ) -> Result<(), String> {
+    if let Some(text) = item
+        .as_object()
+        .and_then(token_proxy_protocol::responses_input::agent_message_text)
+    {
+        if !text.is_empty() {
+            push_claude_message(messages, "user", vec![json!({"type":"text","text":text})]);
+        }
+        return Ok(());
+    }
     // Accept Chat-style `{role, content}` items, as some clients send that into /v1/responses.
     if item.get("role").and_then(Value::as_str).is_some() {
         let role = item.get("role").and_then(Value::as_str).unwrap_or("user");

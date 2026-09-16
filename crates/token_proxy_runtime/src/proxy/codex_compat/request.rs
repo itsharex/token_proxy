@@ -27,7 +27,6 @@ const CODEX_REASONING_ITEM_ID_PREFIX: &str = "rs";
 const CODEX_FUNCTION_CALL_ITEM_ID_PREFIX: &str = "fc";
 const CODEX_CUSTOM_TOOL_CALL_ITEM_ID_PREFIX: &str = "ctc";
 const CODEX_CUSTOM_TOOL_CALL_OUTPUT_ITEM_ID_PREFIX: &str = "ctco";
-const CODEX_TOOL_SCHEMA_MAX_DEPTH: usize = 4;
 
 fn normalize_codex_call_id(id: &str) -> String {
     let candidate = match id {
@@ -110,7 +109,7 @@ pub(crate) fn chat_request_to_codex_with_prompt_cache_key(
     if is_responses_shaped_chat_request(&object) {
         return transform_responses_request_to_codex(body, model_hint, prompt_cache_key);
     }
-    normalize_codex_tool_schema_types(&mut object);
+    super::tool_schema::normalize(&mut object);
 
     let model = resolve_model(&object, model_hint);
     let effort = resolve_reasoning_effort(&object, Some(&model));
@@ -192,7 +191,7 @@ fn transform_responses_request_to_codex(
     let mut object = parse_object(body)?;
     normalize_responses_payload(&mut object, model_hint, prompt_cache_key);
     flatten_responses_namespaces(&mut object)?;
-    normalize_codex_tool_schema_types(&mut object);
+    super::tool_schema::normalize(&mut object);
     let model = object
         .get("model")
         .and_then(Value::as_str)
@@ -649,70 +648,6 @@ fn map_additional_tool_names(tools: &mut Value, tool_map: &ToolNameMap) {
             map_additional_tool_names(nested, tool_map);
         }
     }
-}
-
-// Codex rejects explicit null schema types. Missing types remain valid and must stay absent.
-fn normalize_codex_tool_schema_types(object: &mut Map<String, Value>) {
-    let mut changed = 0usize;
-    if let Some(tools) = object.get_mut("tools") {
-        normalize_codex_tool_schema_types_in_tools(tools, 0, &mut changed);
-    }
-    if let Some(input) = object.get_mut("input").and_then(Value::as_array_mut) {
-        for item in input {
-            if let Some(tools) = item.get_mut("tools") {
-                normalize_codex_tool_schema_types_in_tools(tools, 0, &mut changed);
-            }
-        }
-    }
-    if changed > 0 {
-        tracing::debug!(changed, "normalized explicit null Codex tool schema types");
-    }
-}
-
-fn normalize_codex_tool_schema_types_in_tools(
-    tools: &mut Value,
-    depth: usize,
-    changed: &mut usize,
-) {
-    if depth > CODEX_TOOL_SCHEMA_MAX_DEPTH {
-        return;
-    }
-    let Some(tools) = tools.as_array_mut() else {
-        return;
-    };
-    for tool in tools {
-        let Some(tool) = tool.as_object_mut() else {
-            continue;
-        };
-        if tool
-            .get_mut("parameters")
-            .is_some_and(normalize_explicit_null_schema_type)
-        {
-            *changed += 1;
-        }
-        if tool
-            .get_mut("function")
-            .and_then(Value::as_object_mut)
-            .and_then(|function| function.get_mut("parameters"))
-            .is_some_and(normalize_explicit_null_schema_type)
-        {
-            *changed += 1;
-        }
-        if let Some(nested) = tool.get_mut("tools") {
-            normalize_codex_tool_schema_types_in_tools(nested, depth + 1, changed);
-        }
-    }
-}
-
-fn normalize_explicit_null_schema_type(parameters: &mut Value) -> bool {
-    let Some(parameters) = parameters.as_object_mut() else {
-        return false;
-    };
-    if !parameters.get("type").is_some_and(Value::is_null) {
-        return false;
-    }
-    parameters.insert("type".to_string(), Value::String("object".to_string()));
-    true
 }
 
 fn map_tool_choice(choice: &Value, tool_map: &ToolNameMap) -> Value {
@@ -1375,7 +1310,14 @@ fn sanitize_responses_input_for_codex(items: &[Value]) -> Vec<Value> {
         .map(|item| {
             let had_reasoning_id = item.get("type").and_then(Value::as_str) == Some("reasoning")
                 && item.get("id").and_then(Value::as_str).is_some();
-            let sanitized = sanitize_responses_input_item_for_codex(item);
+            let mut sanitized = sanitize_responses_input_item_for_codex(item);
+            // ChatGPT 拒绝该内部信封字段；只删除 input item 顶层，保留用户内容。
+            if sanitized.as_object_mut().is_some_and(|item| {
+                item.remove("internal_chat_message_metadata_passthrough")
+                    .is_some()
+            }) {
+                tracing::debug!("removed internal Codex input message metadata");
+            }
             if had_reasoning_id && sanitized.get("id").is_none() {
                 removed_reasoning_ids += 1;
             }

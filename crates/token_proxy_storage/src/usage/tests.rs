@@ -2,6 +2,25 @@ use super::*;
 use serde_json::json;
 
 #[test]
+fn gemini_thinking_is_billable_output_in_json_and_usage_only_sse() {
+    for (candidates, expected) in [(Some(5), 47), (None, 42)] {
+        let mut metadata =
+            json!({"promptTokenCount":16,"thoughtsTokenCount":42,"cachedContentTokenCount":4});
+        if let Some(tokens) = candidates {
+            metadata["candidatesTokenCount"] = json!(tokens);
+        }
+        let body = json!({"usageMetadata":metadata});
+        let snapshot = extract_usage_from_response(&Bytes::from(body.to_string()));
+        assert_eq!(snapshot.billable_usage.output_tokens, expected);
+        assert_eq!(snapshot.billable_usage.uncached_input_tokens, 12);
+        assert_eq!(snapshot.usage.unwrap().total_tokens, Some(16 + expected));
+        let mut collector = SseUsageCollector::new();
+        collector.push_chunk(format!("data: {body}\n\n").as_bytes());
+        assert_eq!(collector.finish().billable_usage.output_tokens, expected);
+    }
+}
+
+#[test]
 fn extracts_gemini_usage_and_cache_read_components() {
     let bytes = Bytes::from_static(
         br#"{"usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":2,"totalTokenCount":12,"cachedContentTokenCount":4}}"#,

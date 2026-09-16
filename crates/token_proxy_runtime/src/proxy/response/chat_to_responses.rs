@@ -655,8 +655,7 @@ where
         self.sent_done = true;
 
         let completed_at = (super::now_ms() / 1000) as i64;
-        let (response_status, event_type, incomplete_reason) =
-            incomplete_status(self.finish_reason.as_deref());
+        let mut terminal_finish = self.finish_reason.clone();
         let explicit_tool_finish = matches!(
             self.finish_reason.as_deref(),
             Some("stop" | "tool_calls" | "function_call")
@@ -675,15 +674,25 @@ where
                 dropped_empty_tool_calls += 1;
                 continue;
             }
-            let valid_without_finish = self.finish_reason.is_none()
-                && !call.arguments.trim().is_empty()
-                && serde_json::from_str::<Value>(&call.arguments).is_ok();
-            if incomplete_reason.is_some() || explicit_tool_finish || valid_without_finish {
-                finalizable_calls.push(call_index);
-            } else {
+            // 即使上游宣称 tool_calls/stop，截断、数组或标量参数也不是完整工具输入。
+            let valid = (call.arguments.is_empty() && explicit_tool_finish)
+                || serde_json::from_str::<Value>(&call.arguments)
+                    .is_ok_and(|value| value.is_object());
+            if !valid {
                 unfinished_tool_calls += 1;
             }
+            finalizable_calls.push(call_index);
         }
+        if unfinished_tool_calls > 0
+            && !matches!(
+                terminal_finish.as_deref(),
+                Some("length" | "content_filter")
+            )
+        {
+            terminal_finish = Some("length".to_string());
+        }
+        let (response_status, event_type, incomplete_reason) =
+            incomplete_status(terminal_finish.as_deref());
         for call_index in &finalizable_calls {
             self.emit_function_call_if_ready(*call_index, true);
         }
@@ -731,7 +740,7 @@ where
                 output_index: call.output_index,
                 call_id: call.call_id.clone(),
                 name: call.name.clone(),
-                arguments: if call.arguments.trim().is_empty() && incomplete_reason.is_none() {
+                arguments: if call.arguments.is_empty() && incomplete_reason.is_none() {
                     "{}".to_string()
                 } else {
                     call.arguments.clone()
@@ -751,11 +760,6 @@ where
             .collect::<Vec<_>>();
         for snapshot in &snapshots {
             self.push_item_done_events(snapshot);
-        }
-
-        if unfinished_tool_calls > 0 {
-            self.out.push_back(Bytes::from("data: [DONE]\n\n"));
-            return;
         }
 
         let mut response =

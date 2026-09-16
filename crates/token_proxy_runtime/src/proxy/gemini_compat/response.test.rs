@@ -1,6 +1,19 @@
 use super::*;
 
 #[test]
+fn gemini_thinking_is_included_in_chat_usage() {
+    let input = json!({"usageMetadata":{"promptTokenCount":16,"candidatesTokenCount":5,"thoughtsTokenCount":42,"totalTokenCount":63}});
+    let output = gemini_response_to_chat(&Bytes::from(input.to_string()), None).unwrap();
+    let value: Value = serde_json::from_slice(&output).unwrap();
+    assert_eq!(value["usage"]["completion_tokens"], 47);
+    assert_eq!(
+        value["usage"]["completion_tokens_details"]["reasoning_tokens"],
+        42
+    );
+    assert_eq!(value["usage"]["total_tokens"], 63);
+}
+
+#[test]
 fn chat_response_to_gemini_maps_tool_calls_and_text() {
     let input = json!({
         "id": "chatcmpl_x",

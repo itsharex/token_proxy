@@ -113,8 +113,16 @@ _Avoid_: 上游未配置、上游暂时不可用
 _Avoid_: SSE Chunk（传输分块可能拆分或合并事件）
 
 **Responses Incomplete（Responses 未完成终态）**:
-响应因 token 上限、长度限制或内容过滤而提前结束的终态；输出项保持 incomplete，客户端不得将其视为 completed 或伪造完整工具参数。
+响应因 token 上限、长度限制、内容过滤或工具参数截断而提前结束的终态；输出项保持 incomplete，客户端不得将其视为 completed 或伪造完整工具参数。即使上游声明正常结束，工具参数也必须通过完整对象校验。
 _Avoid_: 正常完成、传输中断、空工具参数自动完成
+
+**Responses Text Recovery（Responses 正文恢复）**:
+转换器按可信 output item 与 content part 身份，对已交付增量和 done/终态快照做前缀对账，只发送缺失后缀。冲突身份或冲突正文不能通过猜测补齐；终态之后不再追加正文。
+_Avoid_: 重发完整快照、把网络分片当作文本边界
+
+**Pre-output Retry Boundary（首输出前重试边界）**:
+明确为空的消息、客户端工具声明和心跳允许继续预读上游错误；一旦出现正文、参数、服务端工具或未知事件，交付流后不得重放。预读受时间、字节和事件预算约束。
+_Avoid_: HTTP 200 即成功、已执行服务端工具后切换上游重放
 
 **Pre-stream Error Response**:
 Responses 流尚未向客户端提交时返回的 HTTP 4xx/5xx JSON 错误。它必须保留真实 HTTP 状态，并满足 OpenAI `ErrorResponse` 的 `type/message/param/code` 字段合同。
@@ -196,17 +204,26 @@ _Avoid_: 缺失 type、空 parameters、schema type array
 Gemini 历史 part 中 `thought=true` 的内部推理内容；system instruction 与普通 contents 都不得把它转换为可见对话历史。
 _Avoid_: 可见 assistant 文本、推理摘要、普通 thought signature
 
+**Gemini Billable Output（Gemini 计费输出）**:
+`candidatesTokenCount + thoughtsTokenCount` 共同组成输出 token。reasoning 明细是该输出总量的子集，不再次叠加；用量可在候选项 finish 之后独立到达。
+_Avoid_: 只统计可见文本、重复计算 reasoning tokens
+
+**Agent Message（智能体任务消息）**:
+Responses `agent_message` 携带父子任务正文；转换到 Chat/Anthropic 时按顺序保留文本片段和该类型的明文 carrier，作为 user 历史。普通 reasoning 的 encrypted_content 保持原语义。
+_Avoid_: 将任务消息丢弃、解码普通加密推理
+
 **Gemini Tool Pairing（Gemini 工具配对）**:
 Gemini function call 与 function response 的稳定关联；优先保留显式 `id`、`call_id` 或 `callId`，缺失时确定性生成，并按函数名 FIFO 消费待配对调用。
 _Avoid_: 仅按数组位置配对、同名调用复用 ID、随机 ID
 
 **Ordered Content Block**:
 Anthropic 消息内容中按原始 `content_block.index` 排列的单个 thinking、text 或 tool_use 项；Responses 转换必须以该顺序生成 added、delta、done 和最终 output。
+反向转换时，交错工具参数必须整理为连续的工具块；每块只 start/stop 一次，关闭后不能再写入 delta。交错缓存有界，超限明确失败。
 _Avoid_: 单一 message 聚合、按类型合并
 
 **Function Arguments Object**:
-Responses function call 的最终参数 JSON 对象；即使上游没有发送 arguments delta，也必须输出 `{}`，不能输出空字符串。
-_Avoid_: 空参数字符串、缺省参数
+Responses function call 的最终参数 JSON 对象；上游明确完成且从未发送参数时可规范为 `{}`。EOF 下的空参数、截断对象、数组和标量不构成完整工具输入；保留内容过滤和长度限制终态。
+_Avoid_: 自动补括号、截断参数伪装成空对象
 
 **xAI API Key Upstream（xAI API Key 上游）**:
 使用开发者 API Key 访问 xAI 官方 API 的普通上游；它没有账户生命周期，继续使用 OpenAI-compatible provider 配置。

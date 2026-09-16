@@ -95,14 +95,19 @@ fn stream_chat_to_responses_does_not_complete_partial_tool_without_finish_reason
         ])
         .await;
 
-        assert!(!payloads.iter().any(|payload| matches!(
-            payload["type"].as_str(),
-            Some(
-                "response.function_call_arguments.done"
-                    | "response.output_item.done"
-                    | "response.completed"
-            )
-        )));
+        // 截断参数保留在 incomplete 快照里，但绝不能宣称 completed。
+        assert!(!payloads
+            .iter()
+            .any(|payload| payload["type"] == "response.completed"));
+        let terminal = payloads
+            .iter()
+            .find(|payload| payload["type"] == "response.incomplete")
+            .expect("incomplete");
+        assert_eq!(terminal["response"]["output"][0]["status"], "incomplete");
+        assert_eq!(
+            terminal["response"]["output"][0]["arguments"],
+            "{\"path\":\"x"
+        );
     });
 }
 
