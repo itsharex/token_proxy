@@ -101,7 +101,8 @@ function QuotaList({
         {items.map((item) => {
           const resetLabel = item.resetAt ? formatDateLabel(item.resetAt) : "";
           const usedPercentage = item.usedPercentage ?? Math.max(0, 100 - item.percentage);
-          const reached = threshold !== null && usedPercentage >= threshold;
+          // 0 关闭用量阈值，进度条也不能显示达到阈值的警告。
+          const reached = threshold !== null && threshold > 0 && usedPercentage >= threshold;
           return (
             <li
               key={item.name}
@@ -177,7 +178,7 @@ export function AccountCredentialPanel({ draft }: AccountCredentialPanelProps) {
 
   const [quotaBusy, setQuotaBusy] = useState(false);
   const [tokenBusy, setTokenBusy] = useState(false);
-  const [thresholdDraft, setThresholdDraft] = useState("");
+  const [thresholdDraft, setThresholdDraft] = useState("0");
   const thresholdCommitRef = useRef(false);
 
   // xAI quota hook 无 autoLoad；账户型编辑打开时事件式拉取。
@@ -250,7 +251,7 @@ export function AccountCredentialPanel({ draft }: AccountCredentialPanelProps) {
   useEffect(() => {
     if (isCodex && summary) {
       setThresholdDraft(
-        summary.quotaThresholdPercent === null ? "" : String(summary.quotaThresholdPercent),
+        String(summary.quotaThresholdPercent ?? 0),
       );
     }
   }, [isCodex, summary]);
@@ -306,26 +307,25 @@ export function AccountCredentialPanel({ draft }: AccountCredentialPanelProps) {
   const codexQuotaCheckedAt = isCodex
     ? codexQuotas.quotas.find((item) => item.account_id === accountId)?.checked_at ?? null
     : null;
+  const codexThresholdPercent = summary?.quotaThresholdPercent ?? 0;
   const codexThresholdReached =
     isCodex &&
-    summary?.quotaThresholdPercent !== null &&
-    summary?.quotaThresholdPercent !== undefined &&
-    (summary.quotaThresholdPercent === 0 ||
-      quotaItems.some(
-        (item) =>
-          item.usedPercentage !== null && item.usedPercentage >= summary.quotaThresholdPercent!,
-      ));
+    codexThresholdPercent > 0 &&
+    quotaItems.some(
+      (item) =>
+        item.usedPercentage !== null && item.usedPercentage >= codexThresholdPercent,
+    );
 
   // 阈值写在账户记录上，不走配置 JSONC 自动保存；失焦/回车即提交。
-  const savedThresholdPercent = summary?.quotaThresholdPercent ?? null;
+  const savedThresholdPercent = codexThresholdPercent;
   const commitThreshold = useCallback(async () => {
     if (!isCodex || !accountId || thresholdCommitRef.current) {
       return;
     }
     const trimmed = thresholdDraft.trim();
-    const value = trimmed === "" ? null : Number(trimmed);
-    const savedLabel = savedThresholdPercent === null ? "" : String(savedThresholdPercent);
-    if (value !== null && (!Number.isInteger(value) || value < 0 || value > 100)) {
+    const value = trimmed === "" ? 0 : Number(trimmed);
+    const savedLabel = String(savedThresholdPercent);
+    if (!Number.isInteger(value) || value < 0 || value > 100) {
       toast.error(m.codex_quota_threshold_invalid());
       setThresholdDraft(savedLabel);
       return;
@@ -559,12 +559,17 @@ export function AccountCredentialPanel({ draft }: AccountCredentialPanelProps) {
                 <AlertTriangle className="size-3.5" aria-hidden="true" />
                 {m.codex_quota_threshold_reached()}
               </span>
-            ) : summary.quotaThresholdPercent !== null ? (
+            ) : codexThresholdPercent > 0 ? (
               <span className="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
                 <CheckCircle2 className="size-3.5" aria-hidden="true" />
                 {m.codex_quota_threshold_active()}
               </span>
-            ) : null}
+            ) : (
+              <span className="inline-flex items-center gap-1 text-[11px] font-medium text-muted-foreground">
+                <CheckCircle2 className="size-3.5" aria-hidden="true" />
+                {m.codex_quota_threshold_disabled()}
+              </span>
+            )}
           </div>
           <div className="flex items-center gap-2">
             <Input
@@ -586,7 +591,7 @@ export function AccountCredentialPanel({ draft }: AccountCredentialPanelProps) {
                 event.preventDefault();
                 event.currentTarget.blur();
               }}
-              placeholder={m.codex_quota_threshold_unset()}
+              placeholder={m.codex_quota_threshold_default()}
               aria-describedby="codex-quota-threshold-help"
               className="h-8 w-24 font-mono tabular-nums"
             />
