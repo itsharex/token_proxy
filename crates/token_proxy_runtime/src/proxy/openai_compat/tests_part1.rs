@@ -370,8 +370,9 @@ fn responses_namespace_custom_tool_maps_to_gemini_and_restores_output_identity()
         "shell__exec"
     );
     assert_eq!(
-        gemini["tools"][0]["functionDeclarations"][0]["parameters"]["properties"]["input"]["type"],
-        "STRING"
+        gemini["tools"][0]["functionDeclarations"][0]["parametersJsonSchema"]["properties"]
+            ["input"]["type"],
+        "string"
     );
     assert_eq!(
         gemini["contents"][0]["parts"][1]["functionCall"]["name"],

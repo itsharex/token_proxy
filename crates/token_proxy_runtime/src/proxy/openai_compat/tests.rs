@@ -50,3 +50,5 @@ mod part1;
 mod part2;
 #[path = "tests_part3.rs"]
 mod part3;
+#[path = "tool_contract.test.rs"]
+mod tool_contract;

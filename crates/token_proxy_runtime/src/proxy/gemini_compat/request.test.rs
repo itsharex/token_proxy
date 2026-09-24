@@ -271,15 +271,15 @@ fn chat_request_to_gemini_cleans_unsupported_tool_schema_fields() {
     let output =
         chat_request_to_gemini(&Bytes::from(serde_json::to_vec(&input).unwrap())).expect("convert");
     let value: Value = serde_json::from_slice(&output).expect("json");
-    let parameters = &value["tools"][0]["functionDeclarations"][0]["parameters"];
+    let parameters = &value["tools"][0]["functionDeclarations"][0]["parametersJsonSchema"];
 
-    assert_eq!(parameters["type"], json!("OBJECT"));
+    assert_eq!(parameters["type"], json!("object"));
     assert!(parameters.get("$defs").is_none());
     assert!(parameters.get("definitions").is_none());
-    assert!(parameters.get("additionalProperties").is_none());
-    assert_eq!(parameters["properties"]["path"]["type"], json!("STRING"));
-    assert!(parameters["properties"]["path"].get("minLength").is_none());
-    assert_eq!(parameters["properties"]["count"]["type"], json!("INTEGER"));
+    assert_eq!(parameters["additionalProperties"], false);
+    assert_eq!(parameters["properties"]["path"]["type"], json!("string"));
+    assert_eq!(parameters["properties"]["path"]["minLength"], 1);
+    assert_eq!(parameters["properties"]["count"]["type"], json!("integer"));
     assert!(parameters["properties"]["empty"].get("type").is_none());
 }
 
@@ -383,4 +383,68 @@ fn gemini_request_to_chat_preserves_audio_and_file_parts() {
         content[1]["file_url"],
         json!("https://example.com/spec.pdf")
     );
+}
+
+// 只封装字符串 $ref，普通 JSON 和实例数据必须保持原样。
+#[test]
+fn chat_request_to_gemini_wraps_tool_results_with_json_references() {
+    let cases = [
+        (json!({"$ref":"#/Schema"}), true),
+        (json!({"nested":[{"$ref":"#/Schema"}]}), true),
+        (json!([{"$ref":"#/Schema"}]), true),
+        (json!({"$ref":12,"nested":{"ok":true}}), false),
+        (json!({"text":"contains $ref as ordinary text"}), false),
+    ];
+    for (result, wrap) in cases {
+        for content in [result.clone(), json!(result.to_string())] {
+            let input = json!({"messages":[
+                {"role":"assistant", "tool_calls":[{"id":"call_1", "type":"function",
+                    "function":{"name":"schema", "arguments":"{}"}}]},
+                {"role":"tool", "tool_call_id":"call_1", "content":content}
+            ]});
+            let output = chat_request_to_gemini(&Bytes::from(input.to_string())).expect("convert");
+            let output: Value = serde_json::from_slice(&output).expect("json");
+            let response = &output["contents"][1]["parts"][0]["functionResponse"]["response"];
+            if wrap {
+                assert_eq!(
+                    serde_json::from_str::<Value>(
+                        response["result"].as_str().expect("opaque JSON")
+                    )
+                    .unwrap(),
+                    result
+                );
+            } else {
+                assert_eq!(response, &result);
+            }
+        }
+    }
+}
+
+// 验证运行时入口实际使用严格模式配置，避免仅协议辅助函数正确。
+#[test]
+fn chat_request_to_gemini_preserves_strict_tool_contract() {
+    for (choice, mode) in [
+        (None, "VALIDATED"),
+        (Some("auto"), "VALIDATED"),
+        (Some("none"), "NONE"),
+        (Some("required"), "ANY"),
+    ] {
+        let mut input = json!({"messages":[{"role":"user","content":"look up"}],"tools":[
+            {"type":"function","function":{"name":"lookup","strict":true,"parameters":{
+                "type":"object","additionalProperties":false,"properties":{"q":{"type":"string","minLength":2}},"required":["q"]
+            }}}
+        ]});
+        if let Some(choice) = choice {
+            input["tool_choice"] = json!(choice);
+        }
+        let output = chat_request_to_gemini(&Bytes::from(input.to_string())).expect("convert");
+        let value: Value = serde_json::from_slice(&output).expect("json");
+        assert_eq!(value["toolConfig"]["functionCallingConfig"]["mode"], mode);
+        let declaration = &value["tools"][0]["functionDeclarations"][0];
+        assert!(declaration.get("parameters").is_none());
+        assert_eq!(
+            declaration["parametersJsonSchema"],
+            input["tools"][0]["function"]["parameters"]
+        );
+    }
 }

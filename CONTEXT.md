@@ -236,6 +236,14 @@ _Avoid_: 将任务消息丢弃、解码普通加密推理
 Gemini function call 与 function response 的稳定关联；优先保留显式 `id`、`call_id` 或 `callId`，缺失时确定性生成，并按函数名 FIFO 消费待配对调用。
 _Avoid_: 仅按数组位置配对、同名调用复用 ID、随机 ID
 
+**Anthropic Tool Call Identity（Anthropic 工具调用身份）**:
+同一 assistant 轮次中用于关联工具调用和结果的原始身份；不同原始身份在转换后仍必须不同，重复结果只属于其原始调用。
+_Avoid_: 将清洗后同名的调用视为同一调用、用函数名代替调用身份
+
+**Strict Tool Arguments（严格工具参数）**:
+要求生成的工具参数满足声明 Schema 的意图；它不强制模型调用工具，也不覆盖显式禁用工具或指定函数的选择。
+_Avoid_: 必须调用工具、JSON 输出模式、忽略 tool choice
+
 **Ordered Content Block**:
 Anthropic 消息内容中按原始 `content_block.index` 排列的单个 thinking、text 或 tool_use 项；Responses 转换必须以该顺序生成 added、delta、done 和最终 output。
 反向转换时，交错工具参数必须整理为连续的工具块；每块只 start/stop 一次，关闭后不能再写入 delta。交错缓存有界，超限明确失败。

@@ -117,10 +117,10 @@ pub(crate) fn chat_request_to_gemini_with_summary_visibility(
             }
         }
     }
-    if let Some(tool_choice) = object.get("tool_choice") {
-        if let Some(tool_config) = map_chat_tool_choice_to_gemini(tool_choice) {
-            out.insert("toolConfig".to_string(), tool_config);
-        }
+    if let Some(tool_config) =
+        map_chat_tool_choice_to_gemini(object.get("tool_choice"), object.get("tools"))
+    {
+        out.insert("toolConfig".to_string(), tool_config);
     }
 
     // 默认安全设置（参考 new-api：禁用内容过滤以保证完整回复）
@@ -185,7 +185,7 @@ pub(crate) fn gemini_request_to_chat_with_summary_visibility(
     }
 
     if let Some(tools) = object.get("tools") {
-        let tools = map_gemini_tools_to_chat(tools);
+        let tools = map_gemini_tools_to_chat(tools, object.get("toolConfig"));
         if tools.as_array().is_some_and(|arr| !arr.is_empty()) {
             out.insert("tools".to_string(), tools);
         }
@@ -1123,12 +1123,29 @@ fn parse_tool_response_content(content: Option<&Value>) -> Value {
     let Some(content) = content else {
         return json!({});
     };
-    match content {
+    let response = match content {
         Value::String(s) => {
             // 尝试解析为 JSON
             serde_json::from_str(s).unwrap_or_else(|_| json!({ "result": s }))
         }
         other => other.clone(),
+    };
+    // Gemini/Vertex 会把对象中的字符串 $ref 当作媒体引用；保留为不透明 JSON 文本。
+    if contains_json_ref(&response) {
+        tracing::debug!("encoded Gemini tool result containing JSON references as text");
+        json!({ "result": response.to_string() })
+    } else {
+        response
+    }
+}
+
+fn contains_json_ref(value: &Value) -> bool {
+    match value {
+        Value::Object(object) => object
+            .iter()
+            .any(|(key, value)| (key == "$ref" && value.is_string()) || contains_json_ref(value)),
+        Value::Array(items) => items.iter().any(contains_json_ref),
+        _ => false,
     }
 }
 

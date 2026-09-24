@@ -878,6 +878,78 @@ fn responses_request_to_anthropic_sanitizes_tool_use_ids_and_adds_missing_result
     );
 }
 
+// 特殊字符清洗、合法 ID 预留、跨轮次重复 ID 和孤立结果必须保持原始配对。
+#[test]
+fn responses_request_to_anthropic_preserves_colliding_tool_results() {
+    let clients = ProxyHttpClients::new().expect("http clients");
+    for raw_ids in [
+        vec!["call:a", "call/a"],
+        vec!["call:a", "call_a", "call/a", "call_a_1"],
+        vec!["call_a_1", "call/a", "call_a", "call:a"],
+        vec!["", "tool_use_id"],
+    ] {
+        let mut input = vec![json!({"role":"user", "content":"run tools"})];
+        for round in 0..2 {
+            for raw_id in &raw_ids {
+                input.push(json!({"type":"function_call", "call_id":raw_id,
+                    "name":"lookup", "arguments":"{}"}));
+            }
+            input.push(
+                json!({"type":"function_call_output", "call_id":"orphan", "output":"ignore"}),
+            );
+            if !raw_ids.contains(&"call_a") {
+                // 孤立结果即使与清洗后的调用 ID 相同，也不能冒充原始调用的结果。
+                input.push(
+                    json!({"type":"function_call_output", "call_id":"call_a", "output":"ignore"}),
+                );
+            }
+            for raw_id in &raw_ids {
+                input.push(json!({"type":"function_call_output", "call_id":raw_id,
+                    "output":format!("{round}:{raw_id}")}));
+            }
+        }
+        let output = run_async(async {
+            responses_request_to_anthropic(
+                &bytes_from_json(json!({"model":"claude-sonnet-4-5", "input":input})),
+                &clients,
+            )
+            .await
+            .expect("convert")
+        });
+        let value = json_from_bytes(output);
+        let messages = value["messages"].as_array().expect("messages");
+        let assistants = messages
+            .iter()
+            .filter(|m| m["role"] == "assistant")
+            .collect::<Vec<_>>();
+        assert_eq!(assistants.len(), 2);
+        for (round, assistant) in assistants.iter().enumerate() {
+            let calls = assistant["content"].as_array().expect("calls");
+            let ids = calls
+                .iter()
+                .map(|c| c["id"].as_str().expect("id"))
+                .collect::<Vec<_>>();
+            assert_eq!(
+                ids.iter().collect::<std::collections::HashSet<_>>().len(),
+                raw_ids.len()
+            );
+            for (raw, id) in raw_ids.iter().zip(&ids) {
+                if !raw.is_empty() && raw.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+                    assert_eq!(raw, id);
+                }
+                let expected = format!("{round}:{raw}");
+                let result = messages
+                    .iter()
+                    .flat_map(|m| m["content"].as_array().expect("content"))
+                    .find(|block| block["content"] == expected)
+                    .expect("result preserved");
+                assert_eq!(result["tool_use_id"], *id);
+            }
+        }
+        assert!(!value.to_string().contains("ignore"));
+    }
+}
+
 #[test]
 fn responses_request_to_anthropic_drops_orphaned_and_duplicate_tool_results() {
     let http_clients = ProxyHttpClients::new().expect("http clients");

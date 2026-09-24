@@ -49,6 +49,7 @@ fn map_responses_tool(value: &Value) -> Option<Value> {
         if let Some(description) = tool.get("description") {
             out.insert("description".to_string(), description.clone());
         }
+        copy_tool_strict(tool, &mut out);
         if let Some(parameters) = tool.get("parameters") {
             out.insert(
                 "input_schema".to_string(),
@@ -65,6 +66,9 @@ fn map_responses_tool(value: &Value) -> Option<Value> {
     if let Some(description) = function.get("description") {
         out.insert("description".to_string(), description.clone());
     }
+    // Chat 的嵌套 function 优先，显式 false 不得被外层 true 覆盖。
+    copy_tool_strict(tool, &mut out);
+    copy_tool_strict(function, &mut out);
     if let Some(parameters) = function.get("parameters") {
         out.insert(
             "input_schema".to_string(),
@@ -72,6 +76,13 @@ fn map_responses_tool(value: &Value) -> Option<Value> {
         );
     }
     Some(Value::Object(out))
+}
+
+fn copy_tool_strict(source: &Map<String, Value>, target: &mut Map<String, Value>) {
+    if let Some(strict) = source.get("strict").and_then(Value::as_bool) {
+        target.insert("strict".to_string(), Value::Bool(strict));
+        tracing::debug!(strict, "preserved Anthropic tool strict setting");
+    }
 }
 
 // Claude requires an object at the schema root. Root unions are flattened while
@@ -221,7 +232,9 @@ fn map_anthropic_tool(value: &Value) -> Option<Value> {
         "parameters".to_string(),
         normalize_anthropic_input_schema(tool.get("input_schema")),
     );
+    // Responses 的缺省 false 保持不变，显式严格工具必须跨协议保留。
     out.insert("strict".to_string(), Value::Bool(false));
+    copy_tool_strict(tool, &mut out);
     Some(Value::Object(out))
 }
 
@@ -340,6 +353,26 @@ pub fn map_anthropic_stop_sequences_to_openai_stop(stop: Option<&Value>) -> Opti
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // 显式 true/false 双向保留；缺省继续采用 Responses 的 false，不能强制严格模式。
+    #[test]
+    fn strict_tools_survive_anthropic_round_trip() {
+        let mapped = map_responses_tools_to_anthropic(&json!([
+            {"type":"function", "name":"strict", "strict":true, "parameters":{"type":"object"}},
+            {"type":"function", "strict":true, "function":{"name":"loose", "strict":false, "parameters":{"type":"object"}}},
+            {"type":"function", "strict":true, "function":{"name":"outer", "parameters":{"type":"object"}}},
+            {"type":"function", "name":"default", "parameters":{"type":"object"}}
+        ]));
+        assert_eq!(mapped[0]["strict"], true);
+        assert_eq!(mapped[1]["strict"], false);
+        assert_eq!(mapped[2]["strict"], true);
+        assert!(mapped[3].get("strict").is_none());
+        let restored = map_anthropic_tools_to_responses(&mapped);
+        assert_eq!(restored[0]["strict"], true);
+        assert_eq!(restored[1]["strict"], false);
+        assert_eq!(restored[2]["strict"], true);
+        assert_eq!(restored[3]["strict"], false);
+    }
 
     #[test]
     fn responses_tools_normalize_root_schema_unions_for_claude() {

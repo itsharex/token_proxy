@@ -905,6 +905,8 @@ fn sanitize_claude_messages_for_anthropic(messages: Vec<Value>) -> Vec<Value> {
         }
     }
 
+    // 先按原始身份配对及去重，再改写 ID，避免清洗碰撞吞掉工具结果。
+    super::tool_ids::normalize_tool_ids(&mut sanitized);
     sanitized
 }
 
@@ -936,23 +938,6 @@ fn sanitize_single_claude_message(message: &Value) -> Option<Value> {
                     }
                     continue;
                 }
-                sanitized_content.push(block);
-            }
-            "tool_use" => {
-                let sanitized_id = sanitize_anthropic_tool_use_id(
-                    object.get("id").and_then(Value::as_str).unwrap_or(""),
-                );
-                object.insert("id".to_string(), Value::String(sanitized_id));
-                sanitized_content.push(block);
-            }
-            "tool_result" => {
-                let sanitized_id = sanitize_anthropic_tool_use_id(
-                    object
-                        .get("tool_use_id")
-                        .and_then(Value::as_str)
-                        .unwrap_or(""),
-                );
-                object.insert("tool_use_id".to_string(), Value::String(sanitized_id));
                 sanitized_content.push(block);
             }
             _ => sanitized_content.push(block),
@@ -1057,9 +1042,7 @@ fn collect_expected_tool_uses(message: &Value) -> HashMap<String, String> {
             continue;
         }
         let tool_use_id = block.get("id").and_then(Value::as_str).unwrap_or("");
-        if tool_use_id.is_empty() {
-            continue;
-        }
+        // 空原始 ID 也先参与配对，随后统一分配占位 ID，避免与合法 tool_use_id 冲突。
         let tool_name = block
             .get("name")
             .and_then(Value::as_str)
@@ -1067,24 +1050,6 @@ fn collect_expected_tool_uses(message: &Value) -> HashMap<String, String> {
         expected.insert(tool_use_id.to_string(), tool_name.to_string());
     }
     expected
-}
-
-fn sanitize_anthropic_tool_use_id(tool_use_id: &str) -> String {
-    let sanitized = tool_use_id
-        .chars()
-        .map(|character| {
-            if character.is_ascii_alphanumeric() || matches!(character, '_' | '-') {
-                character
-            } else {
-                '_'
-            }
-        })
-        .collect::<String>();
-    if sanitized.is_empty() {
-        "tool_use_id".to_string()
-    } else {
-        sanitized
-    }
 }
 
 fn dummy_tool_result_message(missing_tool_results: &[(String, String)]) -> Value {
