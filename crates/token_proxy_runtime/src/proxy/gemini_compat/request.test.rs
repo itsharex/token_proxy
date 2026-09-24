@@ -320,21 +320,31 @@ fn chat_request_to_gemini_preserves_remote_images_and_input_audio() {
 }
 
 #[test]
-fn chat_request_to_gemini_rejects_unsupported_content_parts_instead_of_dropping_them() {
+fn chat_request_to_gemini_maps_video_parts_to_gemini_media() {
     let input = json!({
         "messages": [
             {
                 "role": "user",
                 "content": [
-                    { "type": "video_url", "video_url": { "url": "https://example.com/demo.mp4" } }
+                    { "type": "video_url", "video_url": { "url": "https://example.com/demo.mp4", "processing": "agentic" } },
+                    { "type": "input_video", "video_url": "data:video/webm;base64,AAECAwQ=" }
                 ]
             }
         ]
     });
 
-    let error =
-        chat_request_to_gemini(&Bytes::from(serde_json::to_vec(&input).unwrap())).unwrap_err();
-    assert!(error.contains("Unsupported Chat content part type for Gemini"));
+    let output =
+        chat_request_to_gemini(&Bytes::from(serde_json::to_vec(&input).unwrap())).expect("convert");
+    let value: Value = serde_json::from_slice(&output).expect("json");
+    let parts = value["contents"][0]["parts"].as_array().expect("parts");
+
+    assert_eq!(
+        parts[0]["fileData"]["fileUri"],
+        json!("https://example.com/demo.mp4")
+    );
+    assert_eq!(parts[0]["fileData"]["mimeType"], json!("video/mp4"));
+    assert_eq!(parts[1]["inlineData"]["mimeType"], json!("video/webm"));
+    assert_eq!(parts[1]["inlineData"]["data"], json!("AAECAwQ="));
 }
 
 #[test]

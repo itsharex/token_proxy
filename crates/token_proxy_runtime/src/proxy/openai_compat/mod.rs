@@ -336,7 +336,10 @@ fn chat_request_to_responses_with_prompt_cache_key(
     ensure_prompt_cache_key(&mut output, prompt_cache_key);
     copy_key(object, &mut output, "text");
 
-    strip_sampling_params_for_reasoning_responses_model(&mut output);
+    strip_sampling_params_for_reasoning_responses_model(
+        &mut output,
+        object.get("reasoning_effort"),
+    );
 
     if let Some(max_output_tokens) = object
         .get("max_completion_tokens")
@@ -414,19 +417,38 @@ fn responses_shaped_chat_request_to_responses(
     ] {
         output.remove(key);
     }
-    strip_sampling_params_for_reasoning_responses_model(&mut output);
+    let reasoning_effort = object.get("reasoning_effort").or_else(|| {
+        object
+            .get("reasoning")
+            .and_then(Value::as_object)
+            .and_then(|reasoning| reasoning.get("effort"))
+    });
+    strip_sampling_params_for_reasoning_responses_model(&mut output, reasoning_effort);
 
     serde_json::to_vec(&Value::Object(output))
         .map(Bytes::from)
         .map_err(|err| format!("Failed to serialize request: {err}"))
 }
 
-fn strip_sampling_params_for_reasoning_responses_model(output: &mut Map<String, Value>) {
+fn strip_sampling_params_for_reasoning_responses_model(
+    output: &mut Map<String, Value>,
+    reasoning_effort: Option<&Value>,
+) {
     if output
         .get("model")
         .and_then(Value::as_str)
         .is_some_and(model::is_openai_responses_reasoning_model)
     {
+        let keep_sampling = output
+            .get("model")
+            .and_then(Value::as_str)
+            .is_some_and(model::is_gpt6_sol_or_luna_model)
+            && reasoning_effort
+                .and_then(Value::as_str)
+                .is_some_and(|effort| effort.eq_ignore_ascii_case("none"));
+        if keep_sampling {
+            return;
+        }
         output.remove("temperature");
         output.remove("top_p");
     }

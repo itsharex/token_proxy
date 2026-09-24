@@ -276,6 +276,8 @@ fn parse_codex_effort_suffix(model: &str) -> Option<String> {
         .replace('_', "-");
     for prefix in [
         "gpt-6-astra-",
+        "gpt-6-sol-",
+        "gpt-6-luna-",
         "gpt-6-",
         "gpt-5.6-sol-",
         "gpt-5.6-terra-",
@@ -863,7 +865,12 @@ fn normalize_codex_reasoning_effort(
 ) {
     if !matches!(
         model,
-        "gpt-6-astra" | "gpt-5.6-sol" | "gpt-5.6-terra" | "gpt-5.6-luna"
+        "gpt-6-astra"
+            | "gpt-6-sol"
+            | "gpt-6-luna"
+            | "gpt-5.6-sol"
+            | "gpt-5.6-terra"
+            | "gpt-5.6-luna"
     ) {
         return;
     }
@@ -874,13 +881,11 @@ fn normalize_codex_reasoning_effort(
         .and_then(|reasoning| reasoning.get("effort"))
         .and_then(Value::as_str)
         .map(str::to_string);
-    let Some(effort) = explicit_effort
+    let effort = explicit_effort
         .as_deref()
         .or(inferred_effort)
-        .map(str::to_string)
-    else {
-        return;
-    };
+        .unwrap_or("medium")
+        .to_string();
     let normalized_effort = effort.as_str();
     if explicit_effort.as_deref() == Some(normalized_effort) {
         return;
@@ -947,6 +952,12 @@ fn normalize_codex_model(model: &str) -> String {
 
     if compact == "gpt-6" || compact.starts_with("gpt-6-astra-") {
         return "gpt-6-astra".to_string();
+    }
+    if compact == "gpt-6-sol" || compact.starts_with("gpt-6-sol-") {
+        return "gpt-6-sol".to_string();
+    }
+    if compact == "gpt-6-luna" || compact.starts_with("gpt-6-luna-") {
+        return "gpt-6-luna".to_string();
     }
 
     if compact.contains("gpt-5.6-sol") {
@@ -1116,6 +1127,22 @@ const CODEX_MODEL_ALIASES: &[(&str, &str)] = &[
     ("gpt-6-astra-high", "gpt-6-astra"),
     ("gpt-6-astra-xhigh", "gpt-6-astra"),
     ("gpt-6-astra-max", "gpt-6-astra"),
+    ("gpt-6-sol", "gpt-6-sol"),
+    ("gpt-6-sol-none", "gpt-6-sol"),
+    ("gpt-6-sol-minimal", "gpt-6-sol"),
+    ("gpt-6-sol-low", "gpt-6-sol"),
+    ("gpt-6-sol-medium", "gpt-6-sol"),
+    ("gpt-6-sol-high", "gpt-6-sol"),
+    ("gpt-6-sol-xhigh", "gpt-6-sol"),
+    ("gpt-6-sol-max", "gpt-6-sol"),
+    ("gpt-6-luna", "gpt-6-luna"),
+    ("gpt-6-luna-none", "gpt-6-luna"),
+    ("gpt-6-luna-minimal", "gpt-6-luna"),
+    ("gpt-6-luna-low", "gpt-6-luna"),
+    ("gpt-6-luna-medium", "gpt-6-luna"),
+    ("gpt-6-luna-high", "gpt-6-luna"),
+    ("gpt-6-luna-xhigh", "gpt-6-luna"),
+    ("gpt-6-luna-max", "gpt-6-luna"),
     ("gpt-5.6", "gpt-5.6-sol"),
     ("gpt-5.6-none", "gpt-5.6-sol"),
     ("gpt-5.6-minimal", "gpt-5.6-sol"),
@@ -1263,7 +1290,10 @@ fn ensure_default_instructions(object: &mut Map<String, Value>, model: &str) {
 
 fn codex_base_instructions_for_model(model: &str) -> &'static str {
     let model = model.trim().to_ascii_lowercase();
-    if model.starts_with("gpt-6-astra") {
+    if model.starts_with("gpt-6-astra")
+        || model.starts_with("gpt-6-sol")
+        || model.starts_with("gpt-6-luna")
+    {
         return GPT6_ASTRA_DEFAULT_INSTRUCTIONS;
     }
     if model.contains("codex") {

@@ -261,6 +261,9 @@ async fn augment_codex_models_manifest(
         models.push(serde_json::json!({
             "slug": id,
             "display_name": display_name,
+            "apply_patch_tool_type": null,
+            "upgrade": null,
+            "availability_nux": null,
         }));
         added += 1;
     }

@@ -14,6 +14,10 @@ const GEMINI_UNSUPPORTED_SCHEMA_KEYS: &[&str] = &[
     "$defs",
     "definitions",
     "additionalProperties",
+    "additionalItems",
+    "unevaluatedProperties",
+    "unevaluatedItems",
+    "contentSchema",
     "patternProperties",
     "minLength",
     "maxLength",
@@ -107,12 +111,14 @@ fn clean_tool_schema(schema: &Value) -> Value {
             clean_tool_schema_object(&normalize_malformed_schema_object(object))
         }
         Value::Array(items) => Value::Array(items.iter().map(clean_tool_schema).collect()),
+        Value::Bool(true) => json!({}),
         other => other.clone(),
     }
 }
 
 fn clean_tool_schema_object(object: &Map<String, Value>) -> Value {
     let mut source = object.clone();
+    normalize_prefix_items(&mut source);
     merge_conditional_properties(&mut source, object.get("then"));
     merge_conditional_properties(&mut source, object.get("else"));
     let all_of = source.get("allOf").cloned();
@@ -121,7 +127,10 @@ fn clean_tool_schema_object(object: &Map<String, Value>) -> Value {
     let contains_hint = source.get("contains").and_then(schema_constraint_hint);
     let mut cleaned = Map::new();
     for (key, value) in &source {
-        if GEMINI_UNSUPPORTED_SCHEMA_KEYS.contains(&key.as_str()) || key == "allOf" {
+        if GEMINI_UNSUPPORTED_SCHEMA_KEYS.contains(&key.as_str())
+            || key == "allOf"
+            || (key == "required" && value.is_null())
+        {
             continue;
         }
         if key == "properties" {
@@ -181,15 +190,43 @@ fn clean_tool_schema_object(object: &Map<String, Value>) -> Value {
     if let Some(hint) = contains_hint {
         append_schema_description(&mut cleaned, &format!("contains: {hint}"));
     }
-    if cleaned.get("type").and_then(Value::as_str) == Some("ARRAY")
-        && !cleaned.contains_key("items")
-    {
-        cleaned.insert("items".to_string(), json!({ "type": "STRING" }));
+    if cleaned.get("items").is_some() {
+        let keep_items = cleaned
+            .get("type")
+            .and_then(Value::as_str)
+            .is_some_and(|schema_type| schema_type == "ARRAY");
+        if !keep_items {
+            cleaned.remove("items");
+        }
+    }
+    if cleaned.get("type").and_then(Value::as_str) == Some("ARRAY") {
+        let invalid_items = cleaned.get("items").is_none_or(|items| !items.is_object());
+        if invalid_items {
+            cleaned.insert("items".to_string(), json!({ "type": "STRING" }));
+        }
     }
     if !cleaned.contains_key("properties") {
         cleaned.remove("required");
     }
     Value::Object(cleaned)
+}
+
+fn normalize_prefix_items(source: &mut Map<String, Value>) {
+    let Some(prefix_items) = source.remove("prefixItems") else {
+        return;
+    };
+    let needs_items = source
+        .get("items")
+        .is_none_or(|items| matches!(items, Value::Array(_) | Value::Bool(true)));
+    if !needs_items {
+        return;
+    }
+    let replacement = match prefix_items {
+        Value::Array(mut items) => items.drain(..).next().unwrap_or_else(|| json!({})),
+        Value::Bool(true) => json!({}),
+        _ => json!({}),
+    };
+    source.insert("items".to_string(), replacement);
 }
 
 fn schema_constraint_hint(value: &Value) -> Option<String> {
@@ -442,7 +479,16 @@ fn normalize_gemini_schema_type(object: &mut Map<String, Value>) {
             let normalized = schema_types
                 .iter()
                 .filter_map(Value::as_str)
-                .find(|schema_type| !schema_type.eq_ignore_ascii_case("null"))
+                .filter(|schema_type| !schema_type.eq_ignore_ascii_case("null"))
+                .find(|schema_type| {
+                    object.contains_key("items") && schema_type.eq_ignore_ascii_case("array")
+                })
+                .or_else(|| {
+                    schema_types
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .find(|schema_type| !schema_type.eq_ignore_ascii_case("null"))
+                })
                 .map(str::to_ascii_uppercase);
             match normalized {
                 Some(schema_type) => {
@@ -452,6 +498,15 @@ fn normalize_gemini_schema_type(object: &mut Map<String, Value>) {
                     object.remove("type");
                 }
             }
+        }
+        Some(Value::Null) if object.contains_key("items") => {
+            object.insert("type".to_string(), Value::String("ARRAY".to_string()));
+        }
+        Some(Value::Null) => {
+            object.remove("type");
+        }
+        None if object.contains_key("items") => {
+            object.insert("type".to_string(), Value::String("ARRAY".to_string()));
         }
         _ => {}
     }
@@ -801,6 +856,46 @@ mod tests {
         assert!(cleaned["description"]
             .as_str()
             .is_some_and(|description| description.contains("contains:")));
+    }
+
+    #[test]
+    fn clean_schema_repairs_boolean_required_and_array_schema_edges() {
+        let schema = json!({
+            "type": "object",
+            "required": null,
+            "additionalItems": true,
+            "unevaluatedItems": {},
+            "unevaluatedProperties": {},
+            "contentSchema": {},
+            "properties": {
+                "free": true,
+                "disabled": false,
+                "tuple": {
+                    "type": "array",
+                    "prefixItems": [{"type": "string"}, {"type": "number"}]
+                },
+                "inferred": {"items": {"type": "string"}},
+                "union": {"type": ["string", "array"], "items": {"type": "string"}},
+                "wrong": {"type": "string", "items": {"type": "string"}},
+                "nested": {"type": "array", "items": true}
+            }
+        });
+
+        let cleaned = clean_tool_schema(&schema);
+
+        assert!(cleaned.get("required").is_none());
+        assert!(cleaned.get("additionalItems").is_none());
+        assert!(cleaned.get("unevaluatedItems").is_none());
+        assert!(cleaned.get("unevaluatedProperties").is_none());
+        assert!(cleaned.get("contentSchema").is_none());
+        assert_eq!(cleaned["properties"]["free"], json!({}));
+        assert_eq!(cleaned["properties"]["disabled"], json!(false));
+        assert_eq!(cleaned["properties"]["tuple"]["type"], "ARRAY");
+        assert_eq!(cleaned["properties"]["tuple"]["items"]["type"], "STRING");
+        assert_eq!(cleaned["properties"]["inferred"]["type"], "ARRAY");
+        assert_eq!(cleaned["properties"]["union"]["type"], "ARRAY");
+        assert!(cleaned["properties"]["wrong"].get("items").is_none());
+        assert_eq!(cleaned["properties"]["nested"]["items"], json!({}));
     }
 }
 

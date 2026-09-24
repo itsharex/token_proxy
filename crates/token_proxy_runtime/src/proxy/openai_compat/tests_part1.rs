@@ -80,6 +80,64 @@ fn chat_request_to_responses_strips_sampling_params_for_reasoning_models() {
 }
 
 #[test]
+fn chat_request_to_responses_keeps_sampling_for_gpt6_sol_luna_when_reasoning_is_none() {
+    let http_clients = ProxyHttpClients::new().expect("http clients");
+    for model in ["gpt-6-sol", "gpt-6-luna"] {
+        let input = bytes_from_json(json!({
+            "model": model,
+            "messages": [{ "role": "user", "content": "hi" }],
+            "reasoning_effort": "none",
+            "temperature": 0.7,
+            "top_p": 0.9
+        }));
+
+        let output = run_async(async {
+            transform_request_body(
+                FormatTransform::ChatToResponses,
+                &input,
+                &http_clients,
+                None,
+            )
+            .await
+            .expect("transform")
+        });
+        let value = json_from_bytes(output);
+
+        assert_eq!(value["model"], json!(model));
+        assert_eq!(value["temperature"], json!(0.7));
+        assert_eq!(value["top_p"], json!(0.9));
+        assert_eq!(value["reasoning"]["effort"], json!("none"));
+    }
+}
+
+#[test]
+fn chat_request_to_responses_strips_sampling_for_gpt6_sol_luna_reasoning() {
+    let http_clients = ProxyHttpClients::new().expect("http clients");
+    let input = bytes_from_json(json!({
+        "model": "gpt-6-sol",
+        "messages": [{ "role": "user", "content": "hi" }],
+        "reasoning_effort": "medium",
+        "temperature": 0.7,
+        "top_p": 0.9
+    }));
+
+    let output = run_async(async {
+        transform_request_body(
+            FormatTransform::ChatToResponses,
+            &input,
+            &http_clients,
+            None,
+        )
+        .await
+        .expect("transform")
+    });
+    let value = json_from_bytes(output);
+
+    assert!(value.get("temperature").is_none());
+    assert!(value.get("top_p").is_none());
+}
+
+#[test]
 fn chat_request_to_responses_accepts_responses_shaped_body_when_transforming() {
     let http_clients = ProxyHttpClients::new().expect("http clients");
     let input_items = json!([

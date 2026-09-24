@@ -609,6 +609,17 @@ where
     }
 
     fn push_event_output(&mut self, data: &str) {
+        let allow_codex_metadata = self.context.provider == PROVIDER_CODEX
+            && is_openai_responses_stream_path(&self.context.path);
+        if !should_forward_response_event(data, allow_codex_metadata) {
+            tracing::debug!(
+                provider = %self.context.provider,
+                upstream_id = %self.context.upstream_id,
+                allow_codex_metadata,
+                "filtered private Responses SSE event"
+            );
+            return;
+        }
         let output = self
             .model_override
             .as_deref()
@@ -801,6 +812,25 @@ fn serialize_sse_data_events(events: &[String]) -> Bytes {
         output.push('\n');
     }
     Bytes::from(output)
+}
+
+fn should_forward_response_event(data: &str, allow_codex_metadata: bool) -> bool {
+    if data.trim() == "[DONE]" {
+        return true;
+    }
+    let Ok(value) = serde_json::from_str::<Value>(data) else {
+        return true;
+    };
+    let Some(event_type) = value.get("type").and_then(Value::as_str) else {
+        return true;
+    };
+    if event_type.starts_with("responsesapi.") {
+        return false;
+    }
+    if event_type.starts_with("codex.") {
+        return allow_codex_metadata && event_type == "codex.response.metadata";
+    }
+    true
 }
 
 fn openai_response_failed_done_chunk(
@@ -1018,5 +1048,30 @@ mod tests {
             extract_stream_text_from_value(PROVIDER_XAI, &delta).as_deref(),
             Some("hello")
         );
+    }
+
+    #[test]
+    fn filters_private_responses_events_by_client_contract() {
+        assert!(!should_forward_response_event(
+            r#"{"type":"responsesapi.telemetry"}"#,
+            false
+        ));
+        assert!(!should_forward_response_event(
+            r#"{"type":"codex.rate_limits"}"#,
+            false
+        ));
+        assert!(!should_forward_response_event(
+            r#"{"type":"codex.response.metadata"}"#,
+            false
+        ));
+        assert!(should_forward_response_event(
+            r#"{"type":"codex.response.metadata"}"#,
+            true
+        ));
+        assert!(should_forward_response_event(
+            r#"{"type":"response.completed"}"#,
+            false
+        ));
+        assert!(should_forward_response_event("[DONE]", false));
     }
 }

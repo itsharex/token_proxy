@@ -6,11 +6,11 @@ use std::{
     sync::Arc,
 };
 
-use super::super::compat_reason;
 use super::super::log::{attach_response_body, build_log_entry, LogContext, LogWriter};
 use super::super::sse::SseEventParser;
 use super::super::token_rate::RequestTokenTracker;
 use super::super::usage::SseUsageCollector;
+use super::super::{compat_reason, model};
 use super::responses_error::{responses_stream_error, ResponsesStreamError};
 use super::streaming::STREAM_DROPPED_ERROR;
 use crate::proxy::anthropic_compat::web_search;
@@ -426,6 +426,19 @@ where
         self.stop_tool_use_block(item_id);
     }
 
+    fn signed_thinking_signature(&self, carrier: &str) -> Option<String> {
+        if let Some(signature) = claude_reasoning::signed_thinking_signature(carrier) {
+            return Some(signature);
+        }
+        if !model::is_claude_model(&self.model)
+            || carrier.starts_with(claude_reasoning::SIGNED_THINKING_PREFIX)
+            || carrier.starts_with(claude_reasoning::REDACTED_THINKING_PREFIX)
+        {
+            return None;
+        }
+        Some(carrier.to_string())
+    }
+
     fn handle_output_item_done(&mut self, value: &Value) {
         let Some(item) = value.get("item").and_then(Value::as_object) else {
             return;
@@ -464,12 +477,18 @@ where
                     self.stop_reasoning_block(item_id);
                     self.emit_redacted_reasoning(item);
                 } else {
-                    if let Some(signature) = item
+                    if let Some(carrier) = item
                         .get("encrypted_content")
                         .and_then(Value::as_str)
                         .filter(|value| !value.is_empty())
                     {
-                        self.emit_reasoning_signature(item_id, signature);
+                        if let Some(signature) = self.signed_thinking_signature(carrier) {
+                            self.emit_reasoning_signature(item_id, &signature);
+                        } else {
+                            tracing::debug!(
+                                "dropping Responses reasoning with untrusted encrypted_content"
+                            );
+                        }
                     }
                     self.stop_reasoning_block(item_id);
                 }
@@ -541,13 +560,19 @@ where
                     }
                     let summary = extract_reasoning_text_from_item(item);
                     if let Some(item_id) = item.get("id").and_then(Value::as_str) {
-                        let Some(signature) = item
+                        let carrier = item
                             .get("encrypted_content")
                             .and_then(Value::as_str)
-                            .filter(|value| !value.is_empty())
-                        else {
+                            .filter(|value| !value.is_empty());
+                        let signature =
+                            carrier.and_then(|carrier| self.signed_thinking_signature(carrier));
+                        if carrier.is_some() && signature.is_none() {
+                            tracing::debug!(
+                                "dropping Responses reasoning with untrusted encrypted_content"
+                            );
+                            self.stop_reasoning_block(item_id);
                             continue;
-                        };
+                        }
                         let already_emitted = self
                             .reasoning_blocks
                             .get(item_id)
@@ -555,7 +580,9 @@ where
                         if !already_emitted {
                             self.emit_reasoning_summary_for_item(item_id, &summary);
                         }
-                        self.emit_reasoning_signature(item_id, signature);
+                        if let Some(signature) = signature {
+                            self.emit_reasoning_signature(item_id, &signature);
+                        }
                         self.stop_reasoning_block(item_id);
                     } else if reasoning_snapshot.is_empty() && !summary.is_empty() {
                         reasoning_snapshot = summary;
@@ -1161,11 +1188,8 @@ where
             stop_reason = "max_tokens";
         }
         let usage = self.collector.finish();
-        let (input_tokens, output_tokens) = usage
-            .usage
-            .as_ref()
-            .map(|u| (u.input_tokens.unwrap_or(0), u.output_tokens.unwrap_or(0)))
-            .unwrap_or((0, 0));
+        let input_tokens = usage.billable_usage.uncached_input_tokens;
+        let output_tokens = usage.billable_usage.output_tokens;
         let mut usage_obj = Map::new();
         usage_obj.insert("input_tokens".to_string(), json!(input_tokens));
         usage_obj.insert("output_tokens".to_string(), json!(output_tokens));

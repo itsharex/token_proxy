@@ -342,6 +342,23 @@ fn responses_message_content_to_chat_content(value: &Value) -> Option<Value> {
                         text_only = false;
                         output_parts.push(json!({ "type": "image_url", "image_url": image_url }));
                     }
+                    Some("input_video") | Some("video_url") => {
+                        let mut video_url = match part.get("video_url") {
+                            Some(Value::Object(object)) => Value::Object(object.clone()),
+                            Some(value) => json!({ "url": value.clone() }),
+                            None => json!({}),
+                        };
+                        if let Some(processing) = part.get("processing") {
+                            if let Some(video_url) = video_url.as_object_mut() {
+                                video_url.insert("processing".to_string(), processing.clone());
+                            }
+                        }
+                        text_only = false;
+                        output_parts.push(json!({
+                            "type": "video_url",
+                            "video_url": video_url,
+                        }));
+                    }
                     Some("input_file") => {
                         text_only = false;
                         if let Some(file_url) = part.get("file_url") {

@@ -567,6 +567,10 @@ where
             self.fail_stream(malformed_event_message(&value), 502);
             return;
         };
+        if is_private_responses_event_type(&event_type) {
+            tracing::debug!(event_type, "filtered private Codex Responses event");
+            return;
+        }
         let normalization = responses_failure::normalize_stream_event(
             &mut value,
             &mut self.sequence,
@@ -952,6 +956,10 @@ pub(super) fn is_codex_business_output_event(value: &Value) -> bool {
             }),
         _ => false,
     }
+}
+
+fn is_private_responses_event_type(event_type: &str) -> bool {
+    event_type.starts_with("responsesapi.") || event_type.starts_with("codex.")
 }
 
 fn image_generation_call_text(item: &Map<String, Value>) -> Option<String> {

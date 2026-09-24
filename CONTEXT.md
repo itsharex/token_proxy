@@ -266,8 +266,8 @@ _Avoid_: xAI CLI 网关、自定义 base URL
 _Avoid_: 客户端显式工具声明、Codex Alpha Search、默认联网搜索
 
 **Claude Reasoning Carrier（Claude 推理载体）**:
-Responses reasoning item 的 \`encrypted_content\` 在 Claude 双向转换中的语义载体；普通值表示 thinking signature，\`claude-redacted-thinking:\` 前缀值表示必须原样回放的 \`redacted_thinking\` 数据。
-_Avoid_: 将所有 encrypted content 都当作 redacted thinking、将 marker 当作 signature
+Responses reasoning item 的 \`encrypted_content\` 在 Claude 双向转换中的显式语义载体；\`anthropic-thinking-v1:\` 前缀值承载无填充 Base64 编码的 thinking block，\`claude-redacted-thinking:\` 前缀值承载必须原样回放的 \`redacted_thinking\` 数据。没有载体的纯 reasoning 文本可以作为无签名 thinking 输出；已有 Claude 模型上下文可保留历史 raw signature，其他模型的未标记加密内容不被解释为 Claude 签名。
+_Avoid_: 在非 Claude 模型上下文将未标记 encrypted content 当作 Claude 签名、将所有 encrypted content 都当作 redacted thinking、为纯 reasoning 文本伪造签名
 
 **Claude Server-side Web Search（Claude 服务端搜索）**:
 Claude 原生 \`server_tool_use\`/\`web_search_tool_result\` 内容块与 Responses \`web_search_call\` 的双向表示；搜索结果中的有效加密索引可成为文本引用，缺失或空结果按无结果降级。

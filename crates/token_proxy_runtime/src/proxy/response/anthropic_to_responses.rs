@@ -10,7 +10,7 @@ use super::super::token_rate::RequestTokenTracker;
 use super::super::usage::SseUsageCollector;
 use super::streaming::STREAM_DROPPED_ERROR;
 use crate::proxy::anthropic_compat::web_search;
-use crate::proxy::{claude_reasoning, compat_reason};
+use crate::proxy::{claude_reasoning, compat_reason, model};
 use format::{snapshot_to_output_item, usage_to_value, AnthropicCacheUsage, OutputItemSnapshot};
 
 mod format;
@@ -581,6 +581,26 @@ where
         }
     }
 
+    fn reasoning_carrier(&self, text: &str, carrier: &str) -> Option<String> {
+        if carrier.is_empty() {
+            return None;
+        }
+        if claude_reasoning::redacted_thinking_data(carrier).is_some()
+            || claude_reasoning::signed_thinking_block(carrier).is_some()
+        {
+            return Some(carrier.to_string());
+        }
+        if model::is_claude_opus55_model(&self.model) {
+            return claude_reasoning::signed_thinking_carrier(
+                "thinking",
+                Some(text),
+                Some(carrier),
+                None,
+            );
+        }
+        Some(carrier.to_string())
+    }
+
     fn ensure_message_output(&mut self, block_index: usize) -> usize {
         if let Some(message_index) = self.message_by_block_index.get(&block_index) {
             return *message_index;
@@ -774,11 +794,15 @@ where
             let Some(reasoning) = reasoning else {
                 continue;
             };
+            let encrypted_content = reasoning
+                .encrypted_content
+                .as_deref()
+                .and_then(|carrier| self.reasoning_carrier(&reasoning.text, carrier));
             snapshots.push(OutputItemSnapshot::Reasoning {
                 id: reasoning.id.clone(),
                 output_index: reasoning.output_index,
                 text: reasoning.text.clone(),
-                encrypted_content: reasoning.encrypted_content.clone(),
+                encrypted_content,
             });
         }
         for message in &self.messages {

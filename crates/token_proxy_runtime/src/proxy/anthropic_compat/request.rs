@@ -25,6 +25,7 @@ pub(super) async fn responses_request_to_anthropic(
         .get("model")
         .and_then(Value::as_str)
         .ok_or_else(|| "Request must include model.".to_string())?;
+    let is_opus55 = model::is_claude_opus55_model(model);
 
     let stream = object
         .get("stream")
@@ -49,8 +50,14 @@ pub(super) async fn responses_request_to_anthropic(
         .get("input")
         .ok_or_else(|| "Request must include input.".to_string())?;
     let mut messages = Vec::new();
-    responses_input_to_claude_messages(input, &mut system_texts, &mut messages, http_clients)
-        .await?;
+    responses_input_to_claude_messages(
+        input,
+        &mut system_texts,
+        &mut messages,
+        http_clients,
+        is_opus55,
+    )
+    .await?;
     messages = sanitize_claude_messages_for_anthropic(messages);
 
     let mut out = Map::new();
@@ -70,7 +77,11 @@ pub(super) async fn responses_request_to_anthropic(
         out.insert("top_p".to_string(), top_p.clone());
     }
 
-    map_responses_reasoning_to_anthropic(object.get("reasoning"), &mut out);
+    if is_opus55 {
+        map_opus55_reasoning_to_anthropic(object.get("reasoning"), &mut out)?;
+    } else {
+        map_responses_reasoning_to_anthropic(object.get("reasoning"), &mut out);
+    }
 
     if let Some(stop_sequences) =
         tools::map_openai_stop_to_anthropic_stop_sequences(object.get("stop"))
@@ -90,6 +101,16 @@ pub(super) async fn responses_request_to_anthropic(
         object.get("tool_choice"),
         parallel_tool_calls,
     ) {
+        if is_opus55
+            && matches!(
+                tool_choice.get("type").and_then(Value::as_str),
+                Some("any" | "tool")
+            )
+        {
+            return Err(
+                "claude-opus-5-5 does not support forced tool_choice; use auto or none".to_string(),
+            );
+        }
         out.insert("tool_choice".to_string(), tool_choice);
     }
 
@@ -235,6 +256,7 @@ async fn responses_input_to_claude_messages(
     system_texts: &mut Vec<String>,
     messages: &mut Vec<Value>,
     http_clients: &ProxyHttpClients,
+    preserve_thinking: bool,
 ) -> Result<(), String> {
     match input {
         Value::String(text) => {
@@ -243,8 +265,14 @@ async fn responses_input_to_claude_messages(
         }
         Value::Array(items) => {
             for item in items {
-                responses_input_item_to_claude_messages(item, system_texts, messages, http_clients)
-                    .await?;
+                responses_input_item_to_claude_messages(
+                    item,
+                    system_texts,
+                    messages,
+                    http_clients,
+                    preserve_thinking,
+                )
+                .await?;
             }
         }
         _ => return Err("Responses input must be a string or array.".to_string()),
@@ -257,6 +285,7 @@ async fn responses_input_item_to_claude_messages(
     system_texts: &mut Vec<String>,
     messages: &mut Vec<Value>,
     http_clients: &ProxyHttpClients,
+    preserve_thinking: bool,
 ) -> Result<(), String> {
     if let Some(text) = item
         .as_object()
@@ -303,6 +332,20 @@ async fn responses_input_item_to_claude_messages(
             }
             let blocks = responses_message_content_to_claude_blocks(content, http_clients).await?;
             push_claude_message(messages, role, blocks);
+        }
+        "reasoning" => {
+            let Some(carrier) = object.get("encrypted_content").and_then(Value::as_str) else {
+                return Ok(());
+            };
+            if !preserve_thinking {
+                tracing::debug!("dropping Responses reasoning without Claude model carrier");
+                return Ok(());
+            }
+            if let Some(block) = crate::proxy::claude_reasoning::signed_thinking_block(carrier) {
+                push_claude_message(messages, "assistant", vec![block]);
+            } else {
+                tracing::debug!("dropping Responses reasoning with untrusted encrypted_content");
+            }
         }
         "function_call" | "custom_tool_call" => {
             let tool_use_id = object
@@ -1245,6 +1288,27 @@ fn map_responses_reasoning_to_anthropic(value: Option<&Value>, out: &mut Map<Str
         effort,
         "mapped Responses reasoning to Anthropic"
     );
+}
+
+fn map_opus55_reasoning_to_anthropic(
+    value: Option<&Value>,
+    out: &mut Map<String, Value>,
+) -> Result<(), String> {
+    let effort = value
+        .and_then(Value::as_object)
+        .and_then(|reasoning| reasoning.get("effort"))
+        .and_then(Value::as_str)
+        .unwrap_or("medium");
+    if !matches!(effort, "low" | "medium" | "high" | "xhigh" | "max") {
+        return Err(format!(
+            "claude-opus-5-5 does not support reasoning effort {effort:?}; use low, medium, high, xhigh or max"
+        ));
+    }
+
+    out.insert("thinking".to_string(), json!({ "type": "adaptive" }));
+    out.insert("output_config".to_string(), json!({ "effort": effort }));
+    tracing::debug!(effort, "mapped Claude Opus 5.5 adaptive thinking");
+    Ok(())
 }
 
 fn normalize_anthropic_effort(effort: &str) -> Option<&str> {

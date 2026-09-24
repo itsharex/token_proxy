@@ -265,6 +265,27 @@ fn codex_requests_normalize_gpt_6_astra_aliases_and_effort() {
 }
 
 #[test]
+fn codex_requests_normalize_gpt_6_sol_luna_aliases_and_effort() {
+    for (incoming_model, expected_model, effort) in [
+        ("gpt-6-sol", "gpt-6-sol", "medium"),
+        ("gpt-6-sol-high", "gpt-6-sol", "high"),
+        ("openai/gpt-6-luna-max", "gpt-6-luna", "max"),
+    ] {
+        let input = json!({"model": incoming_model, "input": "hi"});
+        let output = responses_request_to_codex(&Bytes::from(input.to_string()), None)
+            .expect("convert responses request");
+        let value: Value = serde_json::from_slice(&output).expect("json");
+
+        assert_eq!(value["model"], expected_model);
+        assert_eq!(value["reasoning"]["effort"], effort);
+        assert_eq!(
+            value["instructions"],
+            "You are Codex, an agent based on GPT-6."
+        );
+    }
+}
+
+#[test]
 fn responses_request_to_codex_normalizes_dated_gpt_6_astra_variant() {
     let input = json!({
         "model": "OPENAI/GPT-6_ASTRA_2026-09-01",
@@ -300,6 +321,10 @@ fn supported_codex_models_include_current_codex_families() {
     assert!(models.contains(&"gpt-6-max".to_string()));
     assert!(models.contains(&"gpt-6-astra".to_string()));
     assert!(models.contains(&"gpt-6-astra-max".to_string()));
+    assert!(models.contains(&"gpt-6-sol".to_string()));
+    assert!(models.contains(&"gpt-6-sol-high".to_string()));
+    assert!(models.contains(&"gpt-6-luna".to_string()));
+    assert!(models.contains(&"gpt-6-luna-max".to_string()));
 }
 
 #[test]
@@ -623,6 +648,38 @@ async fn stream_codex_to_responses_emits_error_event_for_invalid_json_event() {
         .expect("response.failed payload");
     assert!(failed["response"]["created_at"].as_i64().is_some());
     assert_eq!(failed["response"]["model"], json!("unknown"));
+}
+
+#[tokio::test]
+async fn stream_codex_to_responses_filters_private_events_for_regular_clients() {
+    let upstream = futures_util::stream::iter(vec![
+        Ok::<Bytes, std::io::Error>(Bytes::from(
+            "data: {\"type\":\"codex.response.metadata\",\"metadata\":{\"x\":1}}\n\n",
+        )),
+        Ok(Bytes::from(
+            "data: {\"type\":\"codex.rate_limits\",\"limits\":{}}\n\n",
+        )),
+        Ok(Bytes::from(
+            "data: {\"type\":\"responsesapi.telemetry\",\"value\":1}\n\n",
+        )),
+        Ok(Bytes::from(
+            "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"model\":\"gpt-5\",\"output\":[]}}\n\n",
+        )),
+    ]);
+    let tracker = TokenRateTracker::new().register(None, None).await;
+    let context = test_log_context();
+    let log = Arc::new(LogWriter::new(None));
+
+    let chunks = stream_codex_to_responses(upstream, context, log, tracker)
+        .collect::<Vec<_>>()
+        .await;
+    let text = join_stream_chunks(&chunks);
+
+    assert!(!text.contains("codex.response.metadata"), "chunks: {text}");
+    assert!(!text.contains("codex.rate_limits"), "chunks: {text}");
+    assert!(!text.contains("responsesapi.telemetry"), "chunks: {text}");
+    assert!(text.contains("response.completed"), "chunks: {text}");
+    assert!(text.contains("data: [DONE]"), "chunks: {text}");
 }
 
 #[tokio::test]

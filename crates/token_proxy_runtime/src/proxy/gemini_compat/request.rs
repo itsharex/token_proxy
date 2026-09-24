@@ -832,6 +832,14 @@ fn chat_content_to_gemini_parts(content: Option<&Value>) -> Result<Vec<Value>, S
                                         .and_then(extract_media_format_from_value),
                                 )?);
                             }
+                            "video_url" | "input_video" => {
+                                out.push(media_part_to_gemini_part(
+                                    part,
+                                    "video_url",
+                                    part.get("video_url")
+                                        .and_then(extract_media_format_from_value),
+                                )?);
+                            }
                             "input_audio" => {
                                 out.push(input_audio_part_to_gemini_part(part)?);
                             }
@@ -1036,6 +1044,13 @@ fn infer_mime_type_from_uri(uri: &str) -> Option<String> {
         "mp3" => "audio/mpeg",
         "ogg" => "audio/ogg",
         "flac" => "audio/flac",
+        "mp4" => "video/mp4",
+        "webm" => "video/webm",
+        "mov" => "video/quicktime",
+        "m4v" => "video/x-m4v",
+        "mpeg" | "mpg" => "video/mpeg",
+        "avi" => "video/x-msvideo",
+        "mkv" => "video/x-matroska",
         _ => return None,
     };
     Some(mime_type.to_string())

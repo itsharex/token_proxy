@@ -4123,6 +4123,9 @@ fn codex_models_manifest_augments_non_gpt_models_and_preserves_unknown_fields() 
         assert_eq!(value["manifest_meta"]["kept"], true);
         assert_eq!(models[0]["opaque"]["kept"], true);
         assert_eq!(claude["display_name"], "Claude Sonnet 4.6");
+        assert!(claude["apply_patch_tool_type"].is_null());
+        assert!(claude["upgrade"].is_null());
+        assert!(claude["availability_nux"].is_null());
         assert_eq!(requests.len(), 1);
         assert_eq!(requests[0].path, "/v1/models");
     });

@@ -1,20 +1,51 @@
 use axum::body::Bytes;
-use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde_json::{json, Map, Value};
-use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
     time::{SystemTime, UNIX_EPOCH},
 };
 
 use super::web_search;
-use crate::proxy::{claude_reasoning, compat_reason};
+use crate::proxy::{claude_reasoning, compat_reason, model};
 
 fn now_s() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs() as i64
+}
+
+fn extract_reasoning_item_text(item: &Map<String, Value>) -> String {
+    let summary = item
+        .get("summary")
+        .and_then(Value::as_array)
+        .map(|parts| {
+            parts
+                .iter()
+                .filter_map(|part| {
+                    (part.get("type").and_then(Value::as_str) == Some("summary_text"))
+                        .then(|| part.get("text").and_then(Value::as_str))
+                        .flatten()
+                })
+                .collect::<String>()
+        })
+        .unwrap_or_default();
+    if !summary.is_empty() {
+        return summary;
+    }
+    item.get("content")
+        .and_then(Value::as_array)
+        .map(|parts| {
+            parts
+                .iter()
+                .filter_map(|part| {
+                    (part.get("type").and_then(Value::as_str) == Some("reasoning_text"))
+                        .then(|| part.get("text").and_then(Value::as_str))
+                        .flatten()
+                })
+                .collect::<String>()
+        })
+        .unwrap_or_default()
 }
 
 pub(super) fn responses_response_to_anthropic(
@@ -69,15 +100,64 @@ pub(super) fn responses_response_to_anthropic(
                             "type": "redacted_thinking",
                             "data": data
                         }));
-                    } else {
+                    } else if let Some(block) =
+                        claude_reasoning::signed_thinking_block(encrypted_content)
+                    {
+                        content.push(block);
+                    } else if model::is_claude_model(model)
+                        && !encrypted_content.starts_with(claude_reasoning::SIGNED_THINKING_PREFIX)
+                        && !encrypted_content
+                            .starts_with(claude_reasoning::REDACTED_THINKING_PREFIX)
+                    {
                         content.push(json!({
                             "type": "thinking",
-                            "thinking": extract_reasoning_text_from_item(item),
+                            "thinking": extract_reasoning_item_text(item),
                             "signature": encrypted_content
                         }));
+                    } else {
+                        tracing::debug!(
+                            "dropping Responses reasoning with untrusted encrypted_content"
+                        );
                     }
                 } else {
-                    tracing::debug!("dropping Responses reasoning item without Claude carrier");
+                    let text = item
+                        .get("summary")
+                        .and_then(Value::as_array)
+                        .map(|parts| {
+                            parts
+                                .iter()
+                                .filter_map(|part| {
+                                    (part.get("type").and_then(Value::as_str)
+                                        == Some("summary_text"))
+                                    .then(|| part.get("text").and_then(Value::as_str))
+                                    .flatten()
+                                })
+                                .collect::<String>()
+                        })
+                        .filter(|text| !text.is_empty())
+                        .or_else(|| {
+                            item.get("content")
+                                .and_then(Value::as_array)
+                                .map(|parts| {
+                                    parts
+                                        .iter()
+                                        .filter_map(|part| {
+                                            (part.get("type").and_then(Value::as_str)
+                                                == Some("reasoning_text"))
+                                            .then(|| part.get("text").and_then(Value::as_str))
+                                            .flatten()
+                                        })
+                                        .collect::<String>()
+                                })
+                                .filter(|text| !text.is_empty())
+                        });
+                    if let Some(text) = text {
+                        content.push(json!({ "type": "thinking", "thinking": text }));
+                    } else {
+                        tracing::debug!(
+                            "dropping empty Responses reasoning without Claude carrier"
+                        );
+                    }
                 }
             }
             Some("message") => {
@@ -108,16 +188,7 @@ pub(super) fn responses_response_to_anthropic(
                             }
                             Some("reasoning_text") => {
                                 if let Some(text) = part.get("text").and_then(Value::as_str) {
-                                    let mut block = json!({ "type": "thinking", "thinking": text });
-                                    if let (Some(signature), Some(block)) =
-                                        (thinking_signature(text), block.as_object_mut())
-                                    {
-                                        block.insert(
-                                            "signature".to_string(),
-                                            Value::String(signature),
-                                        );
-                                    }
-                                    content.push(block);
+                                    content.push(json!({ "type": "thinking", "thinking": text }));
                                 }
                             }
                             _ => {}
@@ -182,6 +253,7 @@ pub(super) fn anthropic_response_to_responses(body: &Bytes) -> Result<Bytes, Str
         .get("model")
         .and_then(Value::as_str)
         .unwrap_or("unknown");
+    let is_opus55 = model::is_claude_opus55_model(model);
     let created_at = now_s();
     let stop_reason = object.get("stop_reason").and_then(Value::as_str);
     let (status, incomplete_reason) =
@@ -232,10 +304,19 @@ pub(super) fn anthropic_response_to_responses(body: &Bytes) -> Result<Bytes, Str
                         );
                     }
                     if let Some(signature) = signature {
-                        item.insert(
-                            "encrypted_content".to_string(),
-                            Value::String(signature.to_string()),
-                        );
+                        let carrier = if is_opus55 {
+                            claude_reasoning::signed_thinking_carrier(
+                                "thinking",
+                                Some(text),
+                                Some(signature),
+                                None,
+                            )
+                        } else {
+                            Some(signature.to_string())
+                        };
+                        if let Some(carrier) = carrier {
+                            item.insert("encrypted_content".to_string(), Value::String(carrier));
+                        }
                     }
                 }
                 reasoning_count += 1;
@@ -351,43 +432,6 @@ pub(super) fn anthropic_response_to_responses(body: &Bytes) -> Result<Bytes, Str
         .map_err(|err| format!("Failed to serialize response: {err}"))
 }
 
-fn extract_reasoning_summary(item: &Map<String, Value>) -> String {
-    let Some(summary) = item.get("summary").and_then(Value::as_array) else {
-        return String::new();
-    };
-    let mut combined = String::new();
-    for part in summary {
-        let Some(part) = part.as_object() else {
-            continue;
-        };
-        if part.get("type").and_then(Value::as_str) != Some("summary_text") {
-            continue;
-        }
-        if let Some(text) = part.get("text").and_then(Value::as_str) {
-            combined.push_str(text);
-        }
-    }
-    combined
-}
-
-fn extract_reasoning_text_from_item(item: &Map<String, Value>) -> String {
-    let summary = extract_reasoning_summary(item);
-    if !summary.is_empty() {
-        return summary;
-    }
-    item.get("content")
-        .and_then(Value::as_array)
-        .map(|parts| {
-            parts
-                .iter()
-                .filter_map(Value::as_object)
-                .filter(|part| part.get("type").and_then(Value::as_str) == Some("reasoning_text"))
-                .filter_map(|part| part.get("text").and_then(Value::as_str))
-                .collect::<String>()
-        })
-        .unwrap_or_default()
-}
-
 fn responses_function_call_to_tool_use(item: &Map<String, Value>) -> Option<Value> {
     let call_id = item.get("call_id").and_then(Value::as_str).unwrap_or("");
     let item_id = item.get("id").and_then(Value::as_str).unwrap_or("");
@@ -431,17 +475,8 @@ fn tool_use_to_responses_function_call(block: &Map<String, Value>) -> Option<Val
     }))
 }
 
-fn thinking_signature(text: &str) -> Option<String> {
-    if text.trim().is_empty() {
-        return None;
-    }
-    let mut hasher = Sha256::new();
-    hasher.update(text.as_bytes());
-    Some(STANDARD.encode(hasher.finalize()))
-}
-
 fn map_openai_usage_to_anthropic_usage(usage: &Map<String, Value>) -> Value {
-    let input_tokens = usage
+    let raw_input_tokens = usage
         .get("input_tokens")
         .or_else(|| usage.get("prompt_tokens"))
         .and_then(Value::as_u64)
@@ -451,10 +486,38 @@ fn map_openai_usage_to_anthropic_usage(usage: &Map<String, Value>) -> Value {
         .or_else(|| usage.get("completion_tokens"))
         .and_then(Value::as_u64)
         .unwrap_or(0);
-    json!({
-        "input_tokens": input_tokens,
-        "output_tokens": output_tokens
-    })
+    let details = usage
+        .get("input_tokens_details")
+        .or_else(|| usage.get("prompt_tokens_details"));
+    let cache_read = details
+        .and_then(|details| details.get("cached_tokens"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let cache_write = details
+        .and_then(|details| details.get("cache_write_tokens"))
+        .and_then(Value::as_u64)
+        .filter(|tokens| *tokens > 0)
+        .or_else(|| {
+            details
+                .and_then(|details| details.get("cache_creation_tokens"))
+                .and_then(Value::as_u64)
+                .filter(|tokens| *tokens > 0)
+        })
+        .unwrap_or(0);
+    let input_tokens = raw_input_tokens.saturating_sub(cache_read.saturating_add(cache_write));
+    let mut mapped = Map::new();
+    mapped.insert("input_tokens".to_string(), json!(input_tokens));
+    mapped.insert("output_tokens".to_string(), json!(output_tokens));
+    if cache_read > 0 {
+        mapped.insert("cache_read_input_tokens".to_string(), json!(cache_read));
+    }
+    if cache_write > 0 {
+        mapped.insert(
+            "cache_creation_input_tokens".to_string(),
+            json!(cache_write),
+        );
+    }
+    Value::Object(mapped)
 }
 
 fn map_anthropic_usage_to_openai_usage(usage: &Map<String, Value>) -> Value {

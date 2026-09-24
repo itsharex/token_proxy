@@ -950,6 +950,13 @@ fn responses_request_to_anthropic_sanitizes_empty_text_messages() {
 
 #[test]
 fn responses_response_to_anthropic_maps_reasoning_items_to_thinking_blocks() {
+    let carrier = crate::proxy::claude_reasoning::signed_thinking_carrier(
+        "thinking",
+        Some("first analyze then answer"),
+        Some("SIG_REASONING"),
+        None,
+    )
+    .expect("carrier");
     let input = bytes_from_json(json!({
         "id": "resp_reasoning_item",
         "model": "gpt-5",
@@ -957,7 +964,7 @@ fn responses_response_to_anthropic_maps_reasoning_items_to_thinking_blocks() {
             {
                 "id": "rs_1",
                 "type": "reasoning",
-                "encrypted_content": "SIG_REASONING",
+                "encrypted_content": carrier,
                 "summary": [
                     { "type": "summary_text", "text": "first analyze then answer" }
                 ],
@@ -1239,6 +1246,13 @@ fn anthropic_response_to_responses_maps_max_tokens_to_incomplete_status() {
 
 #[test]
 fn responses_response_to_anthropic_maps_encrypted_reasoning_to_redacted_thinking() {
+    let carrier = crate::proxy::claude_reasoning::signed_thinking_carrier(
+        "thinking",
+        Some("first analyze then answer"),
+        Some("SIG456"),
+        None,
+    )
+    .expect("carrier");
     let input = bytes_from_json(json!({
         "id": "resp_redacted",
         "model": "gpt-4.1",
@@ -1249,7 +1263,7 @@ fn responses_response_to_anthropic_maps_encrypted_reasoning_to_redacted_thinking
                 "summary": [
                     { "type": "summary_text", "text": "first analyze then answer" }
                 ],
-                "encrypted_content": "SIG456"
+                "encrypted_content": carrier
             },
             {
                 "id": "rs_2",
@@ -1306,7 +1320,143 @@ fn responses_response_to_anthropic_includes_thinking_block() {
 
     assert_eq!(value["content"][0]["type"], json!("thinking"));
     assert_eq!(value["content"][0]["thinking"], json!("think"));
-    assert!(value["content"][0]["signature"].as_str().is_some());
+    assert!(value["content"][0].get("signature").is_none());
     assert_eq!(value["content"][1]["type"], json!("text"));
     assert_eq!(value["content"][1]["text"], json!("ok"));
+}
+
+#[test]
+fn responses_response_to_anthropic_preserves_unsigned_reasoning_text() {
+    let input = bytes_from_json(json!({
+        "id": "resp_unsigned_reasoning",
+        "model": "gpt-4.1",
+        "output": [{
+            "id": "rs_1",
+            "type": "reasoning",
+            "summary": [{ "type": "summary_text", "text": "think without carrier" }]
+        }]
+    }));
+
+    let output = responses_response_to_anthropic(&input, None).expect("transform");
+    let value = json_from_bytes(output);
+
+    assert_eq!(value["content"][0]["type"], json!("thinking"));
+    assert_eq!(
+        value["content"][0]["thinking"],
+        json!("think without carrier")
+    );
+    assert!(value["content"][0].get("signature").is_none());
+}
+
+#[test]
+fn responses_response_to_anthropic_preserves_legacy_signature_for_claude_model() {
+    let input = bytes_from_json(json!({
+        "id": "resp_legacy_signature",
+        "model": "claude-3-7-sonnet",
+        "output": [{
+            "id": "rs_1",
+            "type": "reasoning",
+            "encrypted_content": "SIG_LEGACY",
+            "summary": [{ "type": "summary_text", "text": "legacy thought" }]
+        }]
+    }));
+
+    let output = responses_response_to_anthropic(&input, None).expect("transform");
+    let value = json_from_bytes(output);
+
+    assert_eq!(value["content"][0]["type"], json!("thinking"));
+    assert_eq!(value["content"][0]["thinking"], json!("legacy thought"));
+    assert_eq!(value["content"][0]["signature"], json!("SIG_LEGACY"));
+}
+
+#[test]
+fn opus55_responses_request_uses_adaptive_medium_by_default() {
+    let http_clients = ProxyHttpClients::new().expect("http clients");
+    for effort in ["low", "medium", "high", "xhigh", "max"] {
+        let input = bytes_from_json(json!({
+            "model": "claude-opus-5-5",
+            "input": "hello",
+            "reasoning": { "effort": effort }
+        }));
+        let output = run_async(async {
+            responses_request_to_anthropic(&input, &http_clients)
+                .await
+                .expect("transform")
+        });
+        let value = json_from_bytes(output);
+        assert_eq!(value["thinking"]["type"], json!("adaptive"));
+        assert_eq!(value["output_config"]["effort"], json!(effort));
+    }
+
+    let output = run_async(async {
+        responses_request_to_anthropic(
+            &bytes_from_json(json!({
+                "model": "claude-opus-5-5",
+                "input": "hello"
+            })),
+            &http_clients,
+        )
+        .await
+        .expect("transform")
+    });
+    let value = json_from_bytes(output);
+    assert_eq!(value["output_config"]["effort"], json!("medium"));
+
+    for tool_choice in [
+        json!("required"),
+        json!({ "type": "function", "name": "lookup" }),
+    ] {
+        let error = run_async(async {
+            responses_request_to_anthropic(
+                &bytes_from_json(json!({
+                    "model": "claude-opus-5-5",
+                    "input": "hello",
+                    "tool_choice": tool_choice
+                })),
+                &http_clients,
+            )
+            .await
+            .expect_err("forced tool choice must fail")
+        });
+        assert!(error.contains("forced tool_choice"));
+    }
+
+    let error = run_async(async {
+        responses_request_to_anthropic(
+            &bytes_from_json(json!({
+                "model": "claude-opus-5-5",
+                "input": "hello",
+                "reasoning": { "effort": "none" }
+            })),
+            &http_clients,
+        )
+        .await
+        .expect_err("none effort must fail")
+    });
+    assert!(error.contains("reasoning effort"));
+}
+
+#[test]
+fn responses_bridge_rejects_unmarked_openai_encrypted_content() {
+    let input = bytes_from_json(json!({
+        "id": "resp_untrusted_reasoning",
+        "model": "gpt-5",
+        "output": [
+            {
+                "type": "reasoning",
+                "encrypted_content": "ordinary-openai-ciphertext",
+                "summary": [{ "type": "summary_text", "text": "do not replay" }]
+            },
+            {
+                "type": "message",
+                "role": "assistant",
+                "content": [{ "type": "output_text", "text": "answer" }]
+            }
+        ]
+    }));
+
+    let output = responses_response_to_anthropic(&input, None).expect("transform");
+    let value = json_from_bytes(output);
+    assert_eq!(value["content"][0]["type"], json!("text"));
+    assert_eq!(value["content"][0]["text"], json!("answer"));
 }

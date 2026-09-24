@@ -9,7 +9,42 @@ pub(crate) fn is_openai_responses_reasoning_model(model: &str) -> bool {
         .next()
         .unwrap_or_default()
         .to_ascii_lowercase();
-    model.starts_with("gpt-5")
+    model.starts_with("gpt-5") || is_gpt6_sol_or_luna_model(&model)
+}
+
+pub(crate) fn is_gpt6_sol_or_luna_model(model: &str) -> bool {
+    let model = model
+        .trim()
+        .rsplit('/')
+        .next()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    ["gpt-6-sol", "gpt-6-luna"].iter().any(|base| {
+        model == *base
+            || model
+                .strip_prefix(base)
+                .is_some_and(|suffix| suffix.starts_with('-'))
+    })
+}
+
+pub(crate) fn is_claude_opus55_model(model: &str) -> bool {
+    let model = model
+        .trim()
+        .rsplit('/')
+        .next()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    model == "claude-opus-5-5" || model == "claude-opus-5.5"
+}
+
+pub(crate) fn is_claude_model(model: &str) -> bool {
+    let model = model
+        .trim()
+        .rsplit('/')
+        .next()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    model.starts_with("claude-") || model.starts_with("claude_")
 }
 
 pub(crate) fn rewrite_response_model(bytes: &Bytes, model: &str) -> Option<Bytes> {

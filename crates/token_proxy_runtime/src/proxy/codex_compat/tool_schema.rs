@@ -84,9 +84,30 @@ fn normalize_tools(tools: &mut Value, changed: &mut usize) {
 }
 
 fn clean_schema(schema: &mut Value, changed: &mut usize) {
+    match schema {
+        Value::Bool(true) => {
+            *schema = Value::Object(Map::new());
+            *changed += 1;
+            return;
+        }
+        Value::Array(items) => {
+            for item in items {
+                clean_schema(item, changed);
+            }
+            return;
+        }
+        Value::Object(_) => {}
+        _ => return,
+    }
+
     let Some(schema) = schema.as_object_mut() else {
         return;
     };
+    if schema.get("required").is_some_and(Value::is_null) {
+        schema.remove("required");
+        *changed += 1;
+    }
+    normalize_prefix_items(schema, changed);
     for key in ["$schema", "$id"] {
         *changed += usize::from(schema.remove(key).is_some());
     }
@@ -122,6 +143,54 @@ fn clean_schema(schema: &mut Value, changed: &mut usize) {
                 clean_schema(child, changed);
             }
         }
+    }
+    normalize_array_items(schema, changed);
+}
+
+fn normalize_prefix_items(schema: &mut Map<String, Value>, changed: &mut usize) {
+    let Some(prefix_items) = schema.remove("prefixItems") else {
+        return;
+    };
+    let needs_items = schema
+        .get("items")
+        .is_none_or(|items| matches!(items, Value::Array(_) | Value::Bool(true)));
+    if needs_items {
+        let replacement = match prefix_items {
+            Value::Array(mut items) => items.drain(..).next().unwrap_or_else(|| json!({})),
+            Value::Bool(true) => json!({}),
+            _ => json!({}),
+        };
+        schema.insert("items".to_string(), replacement);
+    }
+    *changed += 1;
+}
+
+fn normalize_array_items(schema: &mut Map<String, Value>, changed: &mut usize) {
+    let has_items = schema.contains_key("items");
+    if !has_items {
+        if schema.get("type").and_then(Value::as_str) == Some("array") {
+            schema.insert("items".to_string(), json!({"type": "string"}));
+            *changed += 1;
+        }
+        return;
+    }
+
+    let has_array_type = match schema.get("type") {
+        None => {
+            schema.insert("type".to_string(), Value::String("array".to_string()));
+            *changed += 1;
+            true
+        }
+        Some(Value::String(value)) => value.eq_ignore_ascii_case("array"),
+        Some(Value::Array(values)) => values
+            .iter()
+            .filter_map(Value::as_str)
+            .any(|value| value.eq_ignore_ascii_case("array")),
+        _ => false,
+    };
+    if !has_array_type {
+        schema.remove("items");
+        *changed += 1;
     }
 }
 
@@ -163,5 +232,42 @@ mod tests {
             object["input"][0]["tools"][0]["parameters"],
             json!({"type":"object","properties":{}})
         );
+    }
+
+    #[test]
+    fn repairs_boolean_subschemas_null_required_prefix_items_and_array_items() {
+        let value = json!({
+            "tools": [{
+                "type": "function",
+                "name": "f",
+                "parameters": {
+                    "type": "object",
+                    "required": null,
+                    "properties": {
+                        "free": true,
+                        "disabled": false,
+                        "tuple": {
+                            "type": "array",
+                            "prefixItems": [{"type": "string"}, {"type": "number"}]
+                        },
+                        "inferred": {"items": {"type": "string"}},
+                        "wrong": {"type": "string", "items": {"type": "string"}},
+                        "nested": {"type": "array", "items": true}
+                    }
+                }
+            }]
+        });
+        let mut object = value.as_object().unwrap().clone();
+
+        normalize(&mut object);
+
+        let schema = &object["tools"][0]["parameters"];
+        assert!(schema.get("required").is_none());
+        assert_eq!(schema["properties"]["free"], json!({}));
+        assert_eq!(schema["properties"]["disabled"], json!(false));
+        assert_eq!(schema["properties"]["tuple"]["items"]["type"], "string");
+        assert_eq!(schema["properties"]["inferred"]["type"], "array");
+        assert_eq!(schema["properties"]["wrong"].get("items"), None);
+        assert_eq!(schema["properties"]["nested"]["items"], json!({}));
     }
 }

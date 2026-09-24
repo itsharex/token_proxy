@@ -612,6 +612,41 @@ fn stream_with_model_override_closes_after_responses_terminal_without_upstream_c
 }
 
 #[test]
+fn native_codex_stream_keeps_metadata_but_filters_private_rate_limits() {
+    super::run_async(async {
+        let (log, mut context, _sqlite_pool) = super::setup_responses_stream().await;
+        context.provider = "codex".to_string();
+        let upstream = futures_util::stream::iter(vec![Ok::<Bytes, std::io::Error>(Bytes::from(
+            "data: {\"type\":\"codex.response.metadata\",\"metadata\":{\"x\":1}}\n\ndata: {\"type\":\"codex.rate_limits\",\"limits\":{}}\n\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"model\":\"actual-model\"}}\n\n",
+        ))]);
+        let token_tracker = crate::proxy::token_rate::TokenRateTracker::new()
+            .register(None, None)
+            .await;
+        let stream =
+            super::super::streaming::stream_with_logging_and_model_override_semantic_timeout(
+                upstream,
+                context,
+                log,
+                "visible-model".to_string(),
+                token_tracker,
+                Some(Duration::from_secs(1)),
+            );
+        let chunks = stream
+            .map(|item| item.expect("stream item"))
+            .collect::<Vec<Bytes>>()
+            .await;
+        let body = chunks
+            .iter()
+            .map(|chunk| String::from_utf8_lossy(chunk).to_string())
+            .collect::<String>();
+        assert!(body.contains("codex.response.metadata"), "chunks: {body}");
+        assert!(!body.contains("codex.rate_limits"), "chunks: {body}");
+        assert!(body.contains("response.completed"), "chunks: {body}");
+        assert!(body.contains("data: [DONE]"), "chunks: {body}");
+    });
+}
+
+#[test]
 fn stream_with_model_override_semantic_timeout_emits_response_failed_and_done() {
     super::run_async(async {
         let (log, context, _sqlite_pool) = super::setup_responses_stream().await;
@@ -872,6 +907,13 @@ fn stream_responses_to_anthropic_emits_thinking_from_reasoning_summary_events() 
             timings: Default::default(),
             start: Instant::now(),
         };
+        let carrier = crate::proxy::claude_reasoning::signed_thinking_carrier(
+            "thinking",
+            Some("think step by step"),
+            Some("SIG123"),
+            None,
+        )
+        .expect("Claude thinking carrier");
 
         let upstream = futures_util::stream::iter(vec![
             Ok::<Bytes, std::io::Error>(Bytes::from(
@@ -880,9 +922,22 @@ fn stream_responses_to_anthropic_emits_thinking_from_reasoning_summary_events() 
             Ok(Bytes::from(
                 "data: {\"type\":\"response.reasoning_summary_text.delta\",\"item_id\":\"rs_1\",\"delta\":\"think step by step\"}\n\n",
             )),
-            Ok(Bytes::from(
-                "data: {\"type\":\"response.completed\",\"response\":{\"output\":[{\"id\":\"rs_1\",\"type\":\"reasoning\",\"encrypted_content\":\"SIG123\",\"summary\":[{\"type\":\"summary_text\",\"text\":\"think step by step\"}],\"content\":[{\"type\":\"reasoning_text\",\"text\":\"think step by step\"}]}],\"usage\":{\"input_tokens\":1,\"output_tokens\":2}}}\n\n",
-            )),
+            Ok(Bytes::from(format!(
+                "data: {}\n\n",
+                json!({
+                    "type": "response.completed",
+                    "response": {
+                        "output": [{
+                            "id": "rs_1",
+                            "type": "reasoning",
+                            "encrypted_content": carrier,
+                            "summary": [{"type": "summary_text", "text": "think step by step"}],
+                            "content": [{"type": "reasoning_text", "text": "think step by step"}]
+                        }],
+                        "usage": {"input_tokens": 1, "output_tokens": 2}
+                    }
+                })
+            ))),
             Ok(Bytes::from("data: [DONE]\n\n")),
         ]);
 
@@ -952,7 +1007,7 @@ fn stream_responses_to_anthropic_falls_back_to_reasoning_content_text() {
         let (_, context, _) = super::setup_responses_stream().await;
         let upstream = futures_util::stream::iter(vec![
             Ok::<Bytes, reqwest::Error>(Bytes::from(
-                "data: {\"type\":\"response.completed\",\"response\":{\"output\":[{\"id\":\"rs_1\",\"type\":\"reasoning\",\"encrypted_content\":\"SIG456\",\"summary\":[],\"content\":[{\"type\":\"reasoning_text\",\"text\":\"fallback thought\"}]}]}}\n\n",
+                "data: {\"type\":\"response.completed\",\"response\":{\"output\":[{\"id\":\"rs_1\",\"type\":\"reasoning\",\"summary\":[],\"content\":[{\"type\":\"reasoning_text\",\"text\":\"fallback thought\"}]}]}}\n\n",
             )),
             Ok(Bytes::from("data: [DONE]\n\n")),
         ]);
@@ -977,6 +1032,13 @@ fn stream_responses_to_anthropic_falls_back_to_reasoning_content_text() {
                     && data["delta"]["type"] == json!("thinking_delta")
                     && data["delta"]["thinking"] == json!("fallback thought")
             }));
+        assert!(!chunks
+            .iter()
+            .filter_map(super::parse_anthropic_sse)
+            .any(|(event_type, data)| {
+                event_type == "content_block_delta"
+                    && data["delta"]["type"] == json!("signature_delta")
+            }));
     });
 }
 
@@ -984,13 +1046,28 @@ fn stream_responses_to_anthropic_falls_back_to_reasoning_content_text() {
 fn stream_responses_to_anthropic_emits_signature_from_output_item_done() {
     super::run_async(async {
         let (_, context, _) = super::setup_responses_stream().await;
+        let carrier = crate::proxy::claude_reasoning::signed_thinking_carrier(
+            "thinking",
+            None,
+            Some("SIG_DONE"),
+            None,
+        )
+        .expect("Claude thinking carrier");
         let upstream = futures_util::stream::iter(vec![
             Ok::<Bytes, reqwest::Error>(Bytes::from(
                 "data: {\"type\":\"response.output_item.added\",\"item\":{\"id\":\"rs_1\",\"type\":\"reasoning\"}}\n\n",
             )),
-            Ok(Bytes::from(
-                "data: {\"type\":\"response.output_item.done\",\"item\":{\"id\":\"rs_1\",\"type\":\"reasoning\",\"encrypted_content\":\"SIG_DONE\"}}\n\n",
-            )),
+            Ok(Bytes::from(format!(
+                "data: {}\n\n",
+                json!({
+                    "type": "response.output_item.done",
+                    "item": {
+                        "id": "rs_1",
+                        "type": "reasoning",
+                        "encrypted_content": carrier
+                    }
+                })
+            ))),
             Ok(Bytes::from("data: [DONE]\n\n")),
         ]);
         let token_tracker = crate::proxy::token_rate::TokenRateTracker::new()
@@ -1013,6 +1090,45 @@ fn stream_responses_to_anthropic_emits_signature_from_output_item_done() {
                 event_type == "content_block_delta"
                     && data["delta"]["type"] == json!("signature_delta")
                     && data["delta"]["signature"] == json!("SIG_DONE")
+            }));
+    });
+}
+
+#[test]
+fn stream_responses_to_anthropic_preserves_legacy_signature_for_claude_model() {
+    super::run_async(async {
+        let (_, mut context, _) = super::setup_responses_stream().await;
+        context.model = Some("claude-3-7-sonnet".to_string());
+        context.mapped_model = Some("claude-3-7-sonnet".to_string());
+        let upstream = futures_util::stream::iter(vec![
+            Ok::<Bytes, reqwest::Error>(Bytes::from(
+                "data: {\"type\":\"response.output_item.added\",\"item\":{\"id\":\"rs_legacy\",\"type\":\"reasoning\"}}\n\n",
+            )),
+            Ok(Bytes::from(
+                "data: {\"type\":\"response.output_item.done\",\"item\":{\"id\":\"rs_legacy\",\"type\":\"reasoning\",\"encrypted_content\":\"SIG_LEGACY\"}}\n\n",
+            )),
+            Ok(Bytes::from("data: [DONE]\n\n")),
+        ]);
+        let token_tracker = crate::proxy::token_rate::TokenRateTracker::new()
+            .register(None, None)
+            .await;
+        let chunks = super::super::responses_to_anthropic::stream_responses_to_anthropic(
+            upstream,
+            context,
+            Arc::new(LogWriter::new(None)),
+            token_tracker,
+        )
+        .map(|item| item.expect("stream item"))
+        .collect::<Vec<_>>()
+        .await;
+
+        assert!(chunks
+            .iter()
+            .filter_map(super::parse_anthropic_sse)
+            .any(|(event_type, data)| {
+                event_type == "content_block_delta"
+                    && data["delta"]["type"] == json!("signature_delta")
+                    && data["delta"]["signature"] == json!("SIG_LEGACY")
             }));
     });
 }
@@ -1071,6 +1187,44 @@ fn stream_responses_to_anthropic_emits_redacted_thinking_from_encrypted_reasonin
                 }),
             "missing redacted_thinking content block"
         );
+    });
+}
+
+#[test]
+fn stream_responses_to_anthropic_subtracts_cached_input_from_input_usage() {
+    super::run_async(async {
+        let (log, context, _sqlite_pool) = super::setup_responses_stream().await;
+        let upstream = futures_util::stream::iter(vec![
+            Ok::<Bytes, reqwest::Error>(Bytes::from(
+                "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_cache\",\"output\":[],\"usage\":{\"input_tokens\":20,\"output_tokens\":3,\"total_tokens\":23,\"input_tokens_details\":{\"cached_tokens\":4,\"cache_write_tokens\":3}}}}\n\n",
+            )),
+            Ok(Bytes::from("data: [DONE]\n\n")),
+        ]);
+        let token_tracker = crate::proxy::token_rate::TokenRateTracker::new()
+            .register(None, None)
+            .await;
+        let chunks = super::super::responses_to_anthropic::stream_responses_to_anthropic(
+            upstream,
+            context,
+            log,
+            token_tracker,
+        )
+        .map(|item| item.expect("stream item"))
+        .collect::<Vec<_>>()
+        .await;
+
+        let usage = chunks
+            .iter()
+            .filter_map(super::parse_anthropic_sse)
+            .find(|(event_type, data)| {
+                *event_type == "message_delta" && data.get("usage").is_some()
+            })
+            .map(|(_, data)| data["usage"].clone())
+            .expect("message_delta usage");
+        assert_eq!(usage["input_tokens"], json!(13));
+        assert_eq!(usage["output_tokens"], json!(3));
+        assert_eq!(usage["cache_read_input_tokens"], json!(4));
+        assert_eq!(usage["cache_creation_input_tokens"], json!(3));
     });
 }
 
